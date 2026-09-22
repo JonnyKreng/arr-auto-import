@@ -9,10 +9,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
+COPY engines/ ./engines/
 
 EXPOSE 8000
 
-# Von downloads ~1.5 GB of checkpoints on the first boot (warm-up in lifespan).
+# DECISION_ENGINE selects the backend; either downloads its checkpoints on first
+# boot (warm-up in lifespan): laya typed-decisions ~0.5 GB.
 VOLUME ["/root/.cache/huggingface"]
 
 # First boot is slow while checkpoints download; be generous with start-period.

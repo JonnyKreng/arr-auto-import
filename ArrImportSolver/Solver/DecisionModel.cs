@@ -22,6 +22,8 @@ public sealed class LayaDecideResponse
     public Dictionary<string, object>? Routing { get; set; }
     public Dictionary<string, object>? Usage { get; set; }
 
+    [JsonPropertyName("segments")] public Dictionary<string, object>? Segments { get; set; }
+
     [JsonPropertyName("latency_ms")] public double? LatencyMs { get; set; }
 
     public string? Error { get; set; }

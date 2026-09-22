@@ -9,6 +9,7 @@ public class LidarrOptions
     public bool DryRun { get; set; } = true;
     public int PollIntervalSeconds { get; set; } = 60;
     public string SidecarUrl { get; set; } = "http://sidecar:8000";
+    public int SidecarReadyTimeoutSeconds { get; set; } = 900;
     public LidarrModelOptions Model { get; set; } = new();
 }
 

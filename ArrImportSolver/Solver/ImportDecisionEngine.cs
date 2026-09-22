@@ -302,15 +302,15 @@ public class ImportDecisionEngine : IImportDecisionEngine
             parts.Add($"length: {TimeSpan.FromMilliseconds(track.Duration):m\\:ss}");
         }
 
-        // if (!string.IsNullOrWhiteSpace(release.Title))
-        // {
-        //     parts.Add($"release: '{ToAscii(release.Title)}'");
-        // }
-        //
-        // if (!string.IsNullOrWhiteSpace(release.ReleaseDate))
-        // {
-        //     parts.Add($"released: {ToAscii(release.ReleaseDate)}");
-        // }
+        if (!string.IsNullOrWhiteSpace(release.Title))
+        {
+            parts.Add($"release: '{ToAscii(release.Title)}'");
+        }
+        
+        if (!string.IsNullOrWhiteSpace(release.ReleaseDate))
+        {
+            parts.Add($"released: {ToAscii(release.ReleaseDate)}");
+        }
 
         if (parts.Count > 0)
         {

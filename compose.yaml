@@ -12,7 +12,9 @@
       Lidarr__DryRun: ${LIDARR_DRYRUN:-true}
       Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-60}
       Lidarr__SidecarUrl: http://sidecar:8000
-      Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.85}
+      Lidarr__SidecarReadyTimeoutSeconds: ${LIDARR_SIDECAR_READY_TIMEOUT:-900}
+      Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.70}
+      Lidarr__Model__MaxMappingOptions: ${LIDARR_MAX_MAPPING_OPTIONS:-16}
       Ui__Port: "8080"
     ports:
       - "${UI_PORT:-8080}:8080"
@@ -25,9 +27,12 @@
       context: LayaSidecar
       dockerfile: Dockerfile
     environment:
-      VON_MODEL: ${VON_MODEL:-von-latest}
-      VON_BACKEND: ${VON_BACKEND:-von-1.0}
-      VON_DEVICE: ${VON_DEVICE:-auto}
+      DECISION_ENGINE: ${DECISION_ENGINE:-laya}
+      # laya backend (default): parallel small model, calibrated confidence.
+      LAYA_MODEL: ${LAYA_MODEL:-typed-decisions}
+      LAYA_DEVICE: ${LAYA_DEVICE:-auto}
+      LAYA_PRELOAD: ${LAYA_PRELOAD:-}
+      LAYA_CHUNK_SIZE: ${LAYA_CHUNK_SIZE:-5}
       HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${SIDECAR_PORT:-8000}:8000"

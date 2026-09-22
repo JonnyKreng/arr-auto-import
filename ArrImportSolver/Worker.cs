@@ -25,6 +25,18 @@ public class Worker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Do not request decisions until the sidecar has finished loading its model.
+        if (await laya.WaitUntilReadyAsync(stoppingToken))
+        {
+            logger.LogInformation("Decision sidecar is ready at {Sidecar}", options.CurrentValue.SidecarUrl);
+        }
+        else
+        {
+            logger.LogError(
+                "Decision sidecar never became ready at {Sidecar}; decisions will be left to a human",
+                options.CurrentValue.SidecarUrl);
+        }
+
         var interval = TimeSpan.FromSeconds(Math.Max(5, options.CurrentValue.PollIntervalSeconds));
         using var timer = new PeriodicTimer(interval);
 

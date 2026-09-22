@@ -46,4 +46,67 @@ public class LayaDecisionClient
             return new LayaDecideResponse { Error = ex.Message };
         }
     }
+
+    /// <summary>
+    /// Waits for the sidecar's /ready endpoint to report ready before any decision is requested.
+    /// The sidecar only starts serving once its model has loaded, so early attempts may be
+    /// refused or time out; this polls until it answers <c>{"ready": true}</c>.
+    /// </summary>
+    public async Task<bool> WaitUntilReadyAsync(CancellationToken ct)
+    {
+        var url = $"{_options.CurrentValue.SidecarUrl.TrimEnd('/')}/ready";
+        var timeout = TimeSpan.FromSeconds(Math.Max(1, _options.CurrentValue.SidecarReadyTimeoutSeconds));
+        var deadline = DateTime.UtcNow + timeout;
+        var attempt = 0;
+
+        while (!ct.IsCancellationRequested)
+        {
+            attempt++;
+            try
+            {
+                using var requestCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                requestCt.CancelAfter(TimeSpan.FromSeconds(15));
+
+                using var response = await _http.GetAsync(url, requestCt.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    var ready = await response.Content.ReadFromJsonAsync<ReadyResponse>(JsonOptions, requestCt.Token);
+                    if (ready is { Ready: true })
+                    {
+                        _logger.LogInformation("Decision sidecar is ready at {Url} (attempt {Attempt})", url, attempt);
+                        return true;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Decision sidecar not ready yet at {Url}", url);
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                _logger.LogError(
+                    "Decision sidecar not ready after {TimeoutSeconds}s at {Url}; decisions will be left to a human",
+                    timeout.TotalSeconds, url);
+                return false;
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+        }
+
+        return false;
+    }
+
+    private sealed record ReadyResponse(bool Ready);
 }
