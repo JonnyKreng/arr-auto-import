@@ -13,8 +13,9 @@ COPY engines/ ./engines/
 
 EXPOSE 8000
 
-# DECISION_ENGINE selects the backend; either downloads its checkpoints on first
-# boot (warm-up in lifespan): laya typed-decisions ~0.5 GB.
+# DECISION_ENGINE selects the backend: 'llm' (hosted OpenAI-compatible chat, no
+# checkpoint) or 'laya' (downloads its checkpoints on first boot, warm-up in
+# lifespan): laya typed-decisions ~0.5 GB.
 VOLUME ["/root/.cache/huggingface"]
 
 # First boot is slow while checkpoints download; be generous with start-period.

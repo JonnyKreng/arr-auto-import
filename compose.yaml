@@ -27,12 +27,19 @@
       context: LayaSidecar
       dockerfile: Dockerfile
     environment:
-      DECISION_ENGINE: ${DECISION_ENGINE:-laya}
-      # laya backend (default): parallel small model, calibrated confidence.
+      DECISION_ENGINE: ${DECISION_ENGINE:-llm}
+      # llm backend (default): OpenAI-compatible hosted chat model for the typed questions.
+      # The values below point at the Ollama instance on 192.168.2.2 (gemma4 12B Q4); no key needed.
+      LLM_URL: ${LLM_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      # laya backend (DECISION_ENGINE=laya): parallel small model, calibrated confidence.
       LAYA_MODEL: ${LAYA_MODEL:-typed-decisions}
       LAYA_DEVICE: ${LAYA_DEVICE:-auto}
       LAYA_PRELOAD: ${LAYA_PRELOAD:-}
       LAYA_CHUNK_SIZE: ${LAYA_CHUNK_SIZE:-5}
+      LAYA_TOURNAMENT_ADVANCE: ${LAYA_TOURNAMENT_ADVANCE:-2}
+      LAYA_TOURNAMENT_CONFIDENCE: ${LAYA_TOURNAMENT_CONFIDENCE:-all}
       HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${SIDECAR_PORT:-8000}:8000"

@@ -27,26 +27,14 @@ public interface IImportDecisionEngine
 {
     IReadOnlyList<RowClassification> Classify(IReadOnlyList<ManualImportResource> rows);
 
-    // THE DETERMINISTIC GUARD (deferred): see PLAN notes. Laya's prompt has been sharpened
-    // instead - field-labelled candidates, ASCII-only text, and an explicit instruction that
-    // track title + duration are the primary match signals.
-    //
-    // /// <summary>
-    // /// Deterministic cross-check: finds the single candidate whose title (normalised) matches the
-    // /// downloaded track and whose track number and/or duration agree. Laya is confidently but
-    // /// occasionally wrong (e.g. picking 'Papers' for a file that is exactly 'Hot Tottie'), so a
-    // /// strong deterministic match outranks the model. Returns null when ambiguous.
-    // /// </summary>
-    // MappingCandidate? TryResolveDeterministicMatch(ManualImportResource row,
-    //     IReadOnlyList<MappingCandidate> candidates);
-    //
-    // /// <summary>
-    // /// Unique candidate whose normalised title matches the parsed track's title, ignoring track
-    // /// number/duration. Used as a veto: if Laya confidently picks a different candidate while an
-    // /// exact title match exists, that is the 'Papers instead of Hot Tottie' hallucination and we
-    // /// refuse to act. Returns null when the title matches several candidates (genuinely ambiguous).
-    // /// </summary>
-    // MappingCandidate? TryFindTitleMatch(ManualImportResource row, IReadOnlyList<MappingCandidate> candidates);
+    /// <summary>
+    /// Deterministic exact-match fast path, evaluated before any model call: returns the single
+    /// candidate whose title tokens appear contiguously (normalised) in the downloaded file's name,
+    /// ignoring track number and duration. Returns null when nothing matches, or when several
+    /// candidates match (genuinely ambiguous — defer to the model).
+    /// </summary>
+    MappingCandidate? TryResolveDeterministicMatch(ManualImportResource row,
+        IReadOnlyList<MappingCandidate> candidates);
 
     Task<IReadOnlyList<MappingCandidate>> BuildCandidatesAsync(ManualImportResource row,
         IReadOnlyDictionary<int, IReadOnlyList<TrackResource>> releaseTracks, CancellationToken ct);

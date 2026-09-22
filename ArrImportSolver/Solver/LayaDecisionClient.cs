@@ -31,10 +31,18 @@ public class LayaDecisionClient
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            timeout.CancelAfter(TimeSpan.FromSeconds(180));
 
             using var response = await _http.PostAsync(url, content, timeout.Token);
-            return await response.Content.ReadFromJsonAsync<LayaDecideResponse>(JsonOptions, timeout.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                return await response.Content.ReadFromJsonAsync<LayaDecideResponse>(JsonOptions, timeout.Token);
+            }
+
+            var detail = await response.Content.ReadAsStringAsync(timeout.Token);
+            _logger.LogWarning("Decision sidecar returned {Status} at {Url}: {Detail}",
+                (int)response.StatusCode, url, detail);
+            return new LayaDecideResponse { Error = $"sidecar returned {(int)response.StatusCode}" };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

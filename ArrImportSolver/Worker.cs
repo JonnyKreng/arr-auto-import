@@ -195,6 +195,33 @@ public class Worker(
             return LayaOutcome.Reject;
         }
 
+        var deterministic = engine.TryResolveDeterministicMatch(row, candidates);
+        if (deterministic is not null)
+        {
+            var exactRecord = NewRecord(item, row, DecisionResolver.Deterministic);
+            exactRecord.Candidates = JsonSerializer.Serialize(candidates, JsonOptions);
+            exactRecord.State = JsonSerializer.Serialize(engine.BuildModelState(item, row, candidates), JsonOptions);
+            exactRecord.Confidence = 1d;
+
+            if (deterministic.HasFile)
+            {
+                exactRecord.Action = DecisionAction.RejectBlock;
+                exactRecord.Chosen = $"duplicate: '{deterministic.TrackTitle}' already has a file";
+                exactRecord.Status = DecisionStatus.Pending;
+                pendingRejects.Add(exactRecord);
+                logger.LogInformation(
+                    "Deterministic match '{Track}' already has a file — rejecting+blocklisting download ({Name})",
+                    deterministic.TrackTitle, row.Name);
+                return LayaOutcome.Reject;
+            }
+
+            exactRecord.Action = DecisionAction.Import;
+            exactRecord.Chosen = deterministic.Label;
+            await ApplyImportAsync(exactRecord, row, deterministic, ct);
+            logger.LogInformation("Deterministic exact match: {Name} -> {Track}", row.Name, deterministic.Label);
+            return LayaOutcome.Import;
+        }
+
         var state = engine.BuildModelState(item, row, candidates);
         var questions = engine.BuildQuestions(item, row, candidates);
 

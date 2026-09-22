@@ -146,18 +146,18 @@ public class ImportDecisionEngine : IImportDecisionEngine
             (trackSummary != null ? $" and contains: {trackSummary}." : ".");
 
         var mappingInstructions =
-//             $"""
-//             We want to import a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
-//             {downloadedInfo} Decide by TITLE and LENGTH first: the matching candidate 
-//             has the same title and a nearly equal length, even when its track number differs (deluxe edition, second 
-//             disc or a re-numbering). A radio edit or live version can be shorter or longer, so the title is the decisive 
-//             signal and the length confirms it. If no candidate shares the title and length, answer no_match.
-//             """;
+             $"""
+             We want to import a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
+             {downloadedInfo} Decide by TITLE and LENGTH first: the matching candidate 
+             has the same title and a nearly equal length, even when its track number differs (deluxe edition, second 
+             disc or a re-numbering). A radio edit or live version can be shorter or longer, so the title is the decisive 
+             signal and the length confirms it. If no candidate shares the title and length, answer no_match.
+             """;
 
-            $"""
-            We want to match a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
-            {downloadedInfo}
-            """;
+//             $"""
+//             We want to match a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
+//             {downloadedInfo}
+//             """;
 
         var rejectInstructions =
             $"""
@@ -270,6 +270,104 @@ public class ImportDecisionEngine : IImportDecisionEngine
             TrackIds = candidate?.TrackId is > 0 ? [candidate.TrackId] : row.TrackIds,
             ImportMode = "auto"
         };
+    }
+
+    public MappingCandidate? TryResolveDeterministicMatch(ManualImportResource row,
+        IReadOnlyList<MappingCandidate> candidates)
+    {
+        var fileName = row.Name;
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        var ext = Path.GetExtension(fileName);
+        if (AudioExtensions.Contains(ext))
+        {
+            fileName = fileName[..^ext.Length];
+        }
+
+        var fileTokens = TitleTokens(fileName);
+        if (fileTokens.Count == 0)
+        {
+            return null;
+        }
+
+        var matches = new List<MappingCandidate>();
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate.TrackTitle) &&
+                ContainsTokenSequence(fileTokens, TitleTokens(candidate.TrackTitle)))
+            {
+                matches.Add(candidate);
+            }
+        }
+
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        if (matches.Count == 1)
+        {
+            return matches[0];
+        }
+
+        // Several releases share the same title. Resolve only when exactly one lives on the
+        // target album release; every other collision is genuinely ambiguous and goes to the model.
+        var onTarget = matches.Where(m => m.AlbumReleaseId == row.AlbumReleaseId).ToList();
+        return onTarget.Count == 1 ? onTarget[0] : null;
+    }
+
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".aac", ".aiff", ".ape", ".flac", ".m4a", ".mp2", ".mp3", ".ogg", ".opus", ".wav", ".wma"
+    };
+
+    private static IReadOnlyList<string> TitleTokens(string value)
+    {
+        var normalized = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            // Drop apostrophes (and typographic variants) instead of splitting on them, so the
+            // filename "dont_stop" and the title "Don't Stop" both normalize to the same tokens.
+            if (ch is '\'' or '\u2018' or '\u2019' or '\u201A' or '\u201B')
+            {
+                continue;
+            }
+
+            normalized.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
+        }
+
+        return normalized.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static bool ContainsTokenSequence(IReadOnlyList<string> tokens, IReadOnlyList<string> sequence)
+    {
+        if (sequence.Count == 0 || tokens.Count < sequence.Count)
+        {
+            return false;
+        }
+
+        for (var start = 0; start <= tokens.Count - sequence.Count; start++)
+        {
+            var found = true;
+            for (var i = 0; i < sequence.Count; i++)
+            {
+                if (!string.Equals(tokens[start + i], sequence[i], StringComparison.Ordinal))
+                {
+                    found = false;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string TrackNumberText(JsonElement? el)
