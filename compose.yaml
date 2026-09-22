@@ -1,0 +1,39 @@
+﻿services:
+  arrimportsolver:
+    image: arrimportsolver
+    build:
+      context: .
+      dockerfile: ArrImportSolver/Dockerfile
+    depends_on:
+      - sidecar
+    environment:
+      Lidarr__Url: ${LIDARR_URL:?set LIDARR_URL}
+      Lidarr__Key: ${LIDARR_KEY:?set LIDARR_KEY}
+      Lidarr__DryRun: ${LIDARR_DRYRUN:-true}
+      Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-60}
+      Lidarr__SidecarUrl: http://sidecar:8000
+      Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.85}
+      Ui__Port: "8080"
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    volumes:
+      - decisions-data:/app/data
+
+  sidecar:
+    image: sidecar
+    build:
+      context: LayaSidecar
+      dockerfile: Dockerfile
+    environment:
+      VON_MODEL: ${VON_MODEL:-von-latest}
+      VON_BACKEND: ${VON_BACKEND:-von-1.0}
+      VON_DEVICE: ${VON_DEVICE:-auto}
+      HF_TOKEN: ${HF_TOKEN:-}
+    ports:
+      - "${SIDECAR_PORT:-8000}:8000"
+    volumes:
+      - model-cache:/root/.cache/huggingface
+
+volumes:
+  decisions-data:
+  model-cache:
