@@ -59,6 +59,14 @@ public static class DecisionStatus
     public const string Applied = "Applied";
     public const string SkippedDryRun = "SkippedDryRun";
     public const string Failed = "Failed";
+    public const string Done = "Done";
+}
+
+public sealed class DownloadDoneState
+{
+    [BsonId] public string DownloadId { get; set; } = "";
+
+    public DateTime UtcTimestamp { get; set; }
 }
 
 public static class DecisionResolver
@@ -70,9 +78,11 @@ public static class DecisionResolver
 public class DecisionRepository
 {
     private const string CollectionName = "decisions";
+    private const string DoneCollectionName = "done";
 
     private readonly LiteDatabase _db;
     private readonly ILiteCollection<DecisionRecord> _decisions;
+    private readonly ILiteCollection<DownloadDoneState> _doneDownloads;
 
     public DecisionRepository()
     {
@@ -87,13 +97,22 @@ public class DecisionRepository
 
         _decisions = _db.GetCollection<DecisionRecord>(CollectionName);
         _decisions.EnsureIndex(x => x.UtcTimestamp);
+
+        _doneDownloads = _db.GetCollection<DownloadDoneState>(DoneCollectionName);
+        _doneDownloads.EnsureIndex(x => x.UtcTimestamp);
     }
 
     public void Save(DecisionRecord record)
     {
-        record.Id = 0;
-        record.UtcTimestamp = DateTime.UtcNow;
-        _decisions.Insert(record);
+        if (record.Id == 0)
+        {
+            record.UtcTimestamp = DateTime.UtcNow;
+            _decisions.Insert(record);
+        }
+        else
+        {
+            _decisions.Update(record);
+        }
     }
 
     public DecisionRecord? FindLatest(string downloadId, string rowId)
@@ -114,5 +133,19 @@ public class DecisionRepository
         return limit > 0
             ? query.Limit(Math.Clamp(limit, 1, 5000)).ToArray()
             : query.ToArray();
+    }
+
+    public void MarkDownloadDone(string downloadId)
+    {
+        _doneDownloads.Upsert(new DownloadDoneState
+        {
+            DownloadId = downloadId,
+            UtcTimestamp = DateTime.UtcNow
+        });
+    }
+
+    public bool IsDownloadDone(string downloadId)
+    {
+        return _doneDownloads.FindById(downloadId) is not null;
     }
 }

@@ -107,22 +107,30 @@ public class LidarrClient
         }
     }
 
-    public async Task ImportAsync(IEnumerable<ManualImportUpdateResource> updates, CancellationToken ct)
+    public async Task ImportAsync(IEnumerable<ManualImportFile> files, CancellationToken ct)
     {
-        var updateList = updates.ToArray();
-        var body = JsonSerializer.Serialize(updateList, WriteOptions);
+        var fileList = files.ToArray();
+        var command = new ManualImportCommand
+        {
+            Name = "ManualImport",
+            Files = fileList.ToList(),
+            ImportMode = "auto",
+            ReplaceExistingFiles = false
+        };
+
+        var body = JsonSerializer.Serialize(command, WriteOptions);
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
-        var response = await _http.PostAsync(new Uri(Base, "/api/v1/manualimport"), content, ct);
+        var response = await _http.PostAsync(new Uri(Base, "/api/v1/command"), content, ct);
 
         var text = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError("Lidarr manual import rejected ({Status}): {Body}", (int)response.StatusCode, text);
+            _logger.LogError("Lidarr import command rejected ({Status}): {Body}", (int)response.StatusCode, text);
             response.EnsureSuccessStatusCode();
         }
 
-        _logger.LogInformation("Lidarr manual import accepted {Status} for {Count} update(s)", (int)response.StatusCode,
-            updateList.Length);
+        _logger.LogInformation("Lidarr import command accepted {Status} for {Count} file(s)", (int)response.StatusCode,
+            fileList.Length);
     }
 
     public async Task DeleteQueueItemAsync(int queueId, bool removeFromClient, bool blocklist, CancellationToken ct)

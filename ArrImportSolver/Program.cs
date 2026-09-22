@@ -20,7 +20,8 @@ uiSection.Bind(ui);
 builder.WebHost.UseUrls($"http://0.0.0.0:{ui.Port}");
 
 builder.Services.AddHttpClient<LidarrClient>();
-builder.Services.AddHttpClient<LayaDecisionClient>();
+builder.Services.AddHttpClient<LayaDecisionClient>()
+    .ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
 builder.Services.AddSingleton<DecisionRepository>();
 builder.Services.AddSingleton<IImportDecisionEngine, ImportDecisionEngine>();
 builder.Services.AddHostedService<Worker>();

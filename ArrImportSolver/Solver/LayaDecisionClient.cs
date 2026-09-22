@@ -31,7 +31,7 @@ public class LayaDecisionClient
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(180));
+            timeout.CancelAfter(TimeSpan.FromSeconds(360));
 
             using var response = await _http.PostAsync(url, content, timeout.Token);
             if (response.IsSuccessStatusCode)

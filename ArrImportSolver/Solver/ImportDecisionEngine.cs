@@ -258,17 +258,26 @@ public class ImportDecisionEngine : IImportDecisionEngine
         };
     }
 
-    public ManualImportUpdateResource ToImportUpdate(ManualImportResource row, MappingCandidate? candidate)
+    public ManualImportFile ToImportUpdate(ManualImportResource row, MappingCandidate? candidate)
     {
-        return new ManualImportUpdateResource
+        var trackIds = candidate?.TrackId is > 0
+            ? [candidate.TrackId]
+            : row.TrackIds is { Count: > 0 }
+                ? row.TrackIds
+                : row.Tracks is { Count: > 0 }
+                    ? row.Tracks.Select(t => t.Id).ToList()
+                    : new List<int>();
+
+        return new ManualImportFile
         {
-            Id = row.Id,
-            ArtistId = candidate?.ArtistId ?? row.Artist?.Id,
-            AlbumId = candidate?.AlbumId ?? row.Album?.Id,
-            AlbumReleaseId = candidate?.AlbumReleaseId ?? row.AlbumReleaseId,
+            Path = row.Path,
+            ArtistId = candidate?.ArtistId ?? row.Artist?.Id ?? 0,
+            AlbumId = candidate?.AlbumId ?? row.Album?.Id ?? 0,
+            AlbumReleaseId = candidate?.AlbumReleaseId ?? row.AlbumReleaseId ?? 0,
             Quality = row.Quality,
-            TrackIds = candidate?.TrackId is > 0 ? [candidate.TrackId] : row.TrackIds,
-            ImportMode = "auto"
+            TrackIds = trackIds,
+            DownloadId = row.DownloadId,
+            DisableReleaseSwitching = false
         };
     }
 
@@ -293,11 +302,13 @@ public class ImportDecisionEngine : IImportDecisionEngine
             return null;
         }
 
+        var downloadedDurationMs = DownloadedTrackDurationMs(row);
         var matches = new List<MappingCandidate>();
         foreach (var candidate in candidates)
         {
             if (!string.IsNullOrWhiteSpace(candidate.TrackTitle) &&
-                ContainsTokenSequence(fileTokens, TitleTokens(candidate.TrackTitle)))
+                EndsWithTokenSequence(fileTokens, TitleTokens(candidate.TrackTitle)) &&
+                TrackLengthWithinMargin(candidate.TrackDurationMs, downloadedDurationMs))
             {
                 matches.Add(candidate);
             }
@@ -317,6 +328,39 @@ public class ImportDecisionEngine : IImportDecisionEngine
         // target album release; every other collision is genuinely ambiguous and goes to the model.
         var onTarget = matches.Where(m => m.AlbumReleaseId == row.AlbumReleaseId).ToList();
         return onTarget.Count == 1 ? onTarget[0] : null;
+    }
+
+    // Durations in Lidarr are in milliseconds. A "low margin" keeps the deterministic path
+    // conservative: title matches whose length differs by more than a few seconds are treated
+    // as ambiguous (e.g. a live/radio re-recording) and deferred to the model.
+    private const int TrackLengthMarginMs = 3500;
+
+    private static int? DownloadedTrackDurationMs(ManualImportResource row)
+    {
+        if (row.Tracks is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        foreach (var track in row.Tracks)
+        {
+            if (track.Duration > 0)
+            {
+                return track.Duration;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TrackLengthWithinMargin(int candidateDurationMs, int? downloadedDurationMs)
+    {
+        if (downloadedDurationMs is null || candidateDurationMs <= 0 || downloadedDurationMs <= 0)
+        {
+            return true;
+        }
+
+        return Math.Abs(candidateDurationMs - downloadedDurationMs.Value) <= TrackLengthMarginMs;
     }
 
     private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -342,32 +386,23 @@ public class ImportDecisionEngine : IImportDecisionEngine
         return normalized.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
-    private static bool ContainsTokenSequence(IReadOnlyList<string> tokens, IReadOnlyList<string> sequence)
+    private static bool EndsWithTokenSequence(IReadOnlyList<string> tokens, IReadOnlyList<string> sequence)
     {
         if (sequence.Count == 0 || tokens.Count < sequence.Count)
         {
             return false;
         }
 
-        for (var start = 0; start <= tokens.Count - sequence.Count; start++)
+        var start = tokens.Count - sequence.Count;
+        for (var i = 0; i < sequence.Count; i++)
         {
-            var found = true;
-            for (var i = 0; i < sequence.Count; i++)
+            if (!string.Equals(tokens[start + i], sequence[i], StringComparison.Ordinal))
             {
-                if (!string.Equals(tokens[start + i], sequence[i], StringComparison.Ordinal))
-                {
-                    found = false;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                return true;
+                return false;
             }
         }
 
-        return false;
+        return true;
     }
 
     private static string TrackNumberText(JsonElement? el)

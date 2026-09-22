@@ -76,6 +76,12 @@ public class Worker(
                 continue;
             }
 
+            if (store.IsDownloadDone(item.DownloadId))
+            {
+                logger.LogDebug("Download {DownloadId} already marked done; skipping", item.DownloadId);
+                continue;
+            }
+
             try
             {
                 await ProcessQueueItemAsync(item, ct);
@@ -102,6 +108,8 @@ public class Worker(
         var sawImportAction = false;
         var pendingRejects = new List<DecisionRecord>();
         var pendingNoCandidate = new List<DecisionRecord>();
+        var importFiles = new List<ManualImportFile>();
+        var importRecords = new List<DecisionRecord>();
 
         foreach (var classification in engine.Classify(rows))
         {
@@ -123,14 +131,20 @@ public class Worker(
                     var resolved = NewRecord(item, row, DecisionResolver.Deterministic);
                     resolved.Action = DecisionAction.Import;
                     resolved.Chosen = row.Album?.Title;
-                    await ApplyImportAsync(resolved, row, candidate: null, ct);
+                    ApplyImport(resolved, row, candidate: null, importFiles, importRecords);
                     break;
 
                 default:
-                    var outcome = await ResolveWithLayaAsync(item, row, pendingRejects, pendingNoCandidate, ct);
+                    var outcome = await ResolveWithLayaAsync(item, row, pendingRejects, pendingNoCandidate,
+                        importFiles, importRecords, ct);
                     sawImportAction |= outcome == LayaOutcome.Import;
                     break;
             }
+        }
+
+        if (importFiles.Count > 0)
+        {
+            await SubmitImportsAsync(importFiles, importRecords, item, ct);
         }
 
         if (pendingNoCandidate.Count > 0 && pendingRejects.Count == 0)
@@ -169,7 +183,8 @@ public class Worker(
     }
 
     private async Task<LayaOutcome> ResolveWithLayaAsync(QueueResource item, ManualImportResource row,
-        List<DecisionRecord> pendingRejects, List<DecisionRecord> pendingNoCandidate, CancellationToken ct)
+        List<DecisionRecord> pendingRejects, List<DecisionRecord> pendingNoCandidate,
+        List<ManualImportFile> importFiles, List<DecisionRecord> importRecords, CancellationToken ct)
     {
         var candidates = await BuildCandidatesAsync(row, ct);
         if (candidates.Count == 0)
@@ -217,7 +232,7 @@ public class Worker(
 
             exactRecord.Action = DecisionAction.Import;
             exactRecord.Chosen = deterministic.Label;
-            await ApplyImportAsync(exactRecord, row, deterministic, ct);
+            ApplyImport(exactRecord, row, deterministic, importFiles, importRecords);
             logger.LogInformation("Deterministic exact match: {Name} -> {Track}", row.Name, deterministic.Label);
             return LayaOutcome.Import;
         }
@@ -294,7 +309,7 @@ public class Worker(
                 record.Action = DecisionAction.Import;
                 record.Chosen = chosen.Label;
                 record.Confidence = mapping.Confidence;
-                await ApplyImportAsync(record, row, chosen, ct);
+                ApplyImport(record, row, chosen, importFiles, importRecords);
                 return LayaOutcome.Import;
             }
 
@@ -313,36 +328,58 @@ public class Worker(
         return LayaOutcome.LeaveToHuman;
     }
 
-    private async Task ApplyImportAsync(DecisionRecord record, ManualImportResource row, MappingCandidate? candidate,
-        CancellationToken ct)
+    private void ApplyImport(DecisionRecord record, ManualImportResource row, MappingCandidate? candidate,
+        List<ManualImportFile> importFiles, List<DecisionRecord> importRecords)
     {
-        var update = engine.ToImportUpdate(row, candidate);
+        var file = engine.ToImportUpdate(row, candidate);
 
         if (options.CurrentValue.DryRun)
         {
             record.Status = DecisionStatus.SkippedDryRun;
             logger.LogInformation(
                 "[DryRun] would import {Name} -> {Album} (artist {ArtistId}, album {AlbumId}, release {ReleaseId})",
-                row.Name, record.Chosen, update.ArtistId, update.AlbumId, update.AlbumReleaseId);
+                row.Name, record.Chosen, file.ArtistId, file.AlbumId, file.AlbumReleaseId);
         }
         else
         {
-            try
-            {
-                await lidarr.ImportAsync([update], ct);
-                record.Status = DecisionStatus.Applied;
-                logger.LogInformation("Imported {Name} -> {Album} (release {ReleaseId})", row.Name, record.Chosen,
-                    update.AlbumReleaseId);
-            }
-            catch (Exception ex)
-            {
-                record.Status = DecisionStatus.Failed;
-                record.Error = ex.Message;
-                logger.LogError(ex, "Import failed for {Name}", row.Name);
-            }
+            record.Status = DecisionStatus.Pending;
+            importFiles.Add(file);
+            importRecords.Add(record);
+            logger.LogInformation("Will import {Name} -> {Album} (release {ReleaseId})", row.Name, record.Chosen,
+                file.AlbumReleaseId);
         }
 
         store.Save(record);
+    }
+
+    private async Task SubmitImportsAsync(IReadOnlyList<ManualImportFile> importFiles,
+        IReadOnlyList<DecisionRecord> importRecords, QueueResource item, CancellationToken ct)
+    {
+        try
+        {
+            await lidarr.ImportAsync(importFiles, ct);
+            foreach (var record in importRecords)
+            {
+                record.Status = DecisionStatus.Done;
+                store.Save(record);
+            }
+
+            store.MarkDownloadDone(item.DownloadId!);
+            logger.LogInformation("Imported {Count} file(s) for download {DownloadId}; marked done",
+                importFiles.Count, item.DownloadId);
+        }
+        catch (Exception ex)
+        {
+            foreach (var record in importRecords)
+            {
+                record.Status = DecisionStatus.Failed;
+                record.Error = ex.Message;
+                store.Save(record);
+            }
+
+            logger.LogError(ex, "Import command failed for download {DownloadId} ({Count} file(s))", item.DownloadId,
+                importFiles.Count);
+        }
     }
 
     private async Task ApplyRejectsAsync(IReadOnlyList<DecisionRecord> records, QueueResource item,

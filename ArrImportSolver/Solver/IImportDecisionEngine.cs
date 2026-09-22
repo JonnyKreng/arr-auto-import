@@ -29,9 +29,10 @@ public interface IImportDecisionEngine
 
     /// <summary>
     /// Deterministic exact-match fast path, evaluated before any model call: returns the single
-    /// candidate whose title tokens appear contiguously (normalised) in the downloaded file's name,
-    /// ignoring track number and duration. Returns null when nothing matches, or when several
-    /// candidates match (genuinely ambiguous — defer to the model).
+    /// candidate whose title tokens appear contiguously (normalised) in the downloaded file's name
+    /// and whose track length is within a low margin of the downloaded file's length (when known),
+    /// ignoring track number. Returns null when nothing matches, or when several candidates match
+    /// (genuinely ambiguous — defer to the model).
     /// </summary>
     MappingCandidate? TryResolveDeterministicMatch(ManualImportResource row,
         IReadOnlyList<MappingCandidate> candidates);
@@ -45,5 +46,5 @@ public interface IImportDecisionEngine
     object BuildModelState(QueueResource queueItem, ManualImportResource row,
         IReadOnlyList<MappingCandidate> candidates);
 
-    ManualImportUpdateResource ToImportUpdate(ManualImportResource row, MappingCandidate? candidate);
+    ManualImportFile ToImportUpdate(ManualImportResource row, MappingCandidate? candidate);
 }

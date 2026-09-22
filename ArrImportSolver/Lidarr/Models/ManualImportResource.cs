@@ -36,13 +36,24 @@ public sealed class TrackResource
     public bool HasFile { get; set; }
 }
 
-public sealed class ManualImportUpdateResource
+public sealed class ManualImportFile
 {
-    public int? Id { get; set; }
-    public int? ArtistId { get; set; }
-    public int? AlbumId { get; set; }
-    public int? AlbumReleaseId { get; set; }
-    public QualityModel? Quality { get; set; }
+    public string? Path { get; set; }
+    public int ArtistId { get; set; }
+    public int AlbumId { get; set; }
+    public int AlbumReleaseId { get; set; }
     public List<int>? TrackIds { get; set; }
+    public QualityModel? Quality { get; set; }
+    public string? ReleaseGroup { get; set; }
+    public int IndexerFlags { get; set; }
+    public string? DownloadId { get; set; }
+    public bool DisableReleaseSwitching { get; set; }
+}
+
+public sealed class ManualImportCommand
+{
+    public string? Name { get; set; } = "ManualImport";
+    public List<ManualImportFile>? Files { get; set; }
     public string? ImportMode { get; set; }
+    public bool ReplaceExistingFiles { get; set; }
 }

@@ -27,7 +27,7 @@ Alternatives rejected for v1: pythonnet (heavy, fragile in Linux container), ONN
 │                    │  GET /api/v1/manualimport?downloadId  │
 │                    ▼                                       │
 │  ImportDecisionEngine (deterministic rules)                │
-│     ├─ resolved/safe  ──► POST /api/v1/manualimport        │
+│     ├─ resolved/safe  ──► POST /api/v1/command (ManualImport)│
 │     └─ ambiguous      ──► LayaClient ──► [sidecar] /decide │
 │                              │  choice/noul answers+conf   │
 │                              ▼                             │
@@ -57,7 +57,9 @@ Two boxes:
      deterministic import. (If Lidarr's ranking already produced a single confident parse, no model.)
    - Otherwise → **ambiguous**, hand to the Laya sidecar.
 4. Model resolve (see below) → act, or leave to human.
-5. `POST /api/v1/manualimport` with `ManualImportUpdateResource[]` for the import decisions.
+5. `POST /api/v1/command` with a `ManualImportCommand` (`name: "ManualImport"`) wrapping all chosen files for the download
+   in one command — the **only** endpoint that actually imports. `POST /api/v1/manualimport` must NOT be used for imports:
+   it merely re-evaluates the rows and returns the refreshed list.
 6. Persist every decision + outcome to the DB. UI shows the log.
 
 ## Decision layers
@@ -85,7 +87,7 @@ advisory, not absolute.
 ### Actions the model can produce
 | Model decision      | C# action                                                        |
 |---------------------|------------------------------------------------------------------|
-| `import:<candidate>`| `POST /api/v1/manualimport` with resolved `artistId/albumId/albumReleaseId/quality` |
+| `import:<candidate>`| `POST /api/v1/command` with `ManualImportCommand` file containing resolved `artistId/albumId/albumReleaseId/trackIds/quality/downloadId` |
 | `reject_block`      | `DELETE /api/v1/queue/{queueId}?removeFromClient=true&blocklist=true` — reject download **and** blocklist the release so Lidarr won't grab it again |
 | `leave_to_human`    | no action, log the low-confidence case                           |
 
@@ -104,8 +106,14 @@ Collection `decisions`:
 - `resolver` (`Deterministic` | `Laya`)
 - `state` (json sent to model), `modelAnswer` (choice/score/confidence/probabilities/routing json)
 - `action` (`Import` | `RejectBlock` | `Skip` | `LeaveToHuman`)
-- `status` (`Pending` | `Applied` | `SkippedDryRun` | `Failed`)
+- `status` (`Pending` | `Applied` | `SkippedDryRun` | `Failed` | `Done`)
 - `error`, `inputSize`, `latencyMs`
+
+Collection `done` (download-level completion markers, distinct per download):
+- `downloadId` (BsonId), `utcTimestamp`
+- Written after a batch `ManualImport` command is accepted so the album's queue item is not
+  re-decided on later polls (leftover duplicate rows otherwise re-trigger decisions indefinitely).
+  The worker skips any queue item whose `downloadId` is marked done.
 
 ## UI (simple)
 - Switch Worker host to `WebApplication` (keeps `AddHostedService`). Endpoints:
@@ -137,7 +145,7 @@ ArrImportSolver/
   Program.cs                  → WebApplication + DI (options, typed Lidarr client, store, worker)
   Options/LidarrOptions.cs    → Url, Key, DryRun, PollIntervalSeconds, SidecarUrl, MinConfidence
   Lidarr/LidarrClient.cs      → GetQueue, GetManualImport, Import, DeleteQueueItem(reject+block)
-  Lidarr/Models/*.cs          → QueueResource, ManualImportResource, ManualImportUpdateResource,
+  Lidarr/Models/*.cs          → QueueResource, ManualImportResource, ManualImportFile, ManualImportCommand,
                                 QualityModel…
   Solver/IImportDecisionEngine.cs, ImportDecisionEngine.cs   → deterministic classification
   Solver/LayaDecisionClient.cs → POST /decide to sidecar

@@ -10,7 +10,7 @@
       Lidarr__Url: ${LIDARR_URL:?set LIDARR_URL}
       Lidarr__Key: ${LIDARR_KEY:?set LIDARR_KEY}
       Lidarr__DryRun: ${LIDARR_DRYRUN:-true}
-      Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-60}
+      Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-20}
       Lidarr__SidecarUrl: http://sidecar:8000
       Lidarr__SidecarReadyTimeoutSeconds: ${LIDARR_SIDECAR_READY_TIMEOUT:-900}
       Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.70}
