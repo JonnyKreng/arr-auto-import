@@ -105,7 +105,6 @@ public class Worker(
             return;
         }
 
-        var sawImportAction = false;
         var pendingRejects = new List<DecisionRecord>();
         var pendingNoCandidate = new List<DecisionRecord>();
         var importFiles = new List<ManualImportFile>();
@@ -127,7 +126,6 @@ public class Worker(
                     break;
 
                 case RowKind.Resolved:
-                    sawImportAction = true;
                     var resolved = NewRecord(item, row, DecisionResolver.Deterministic);
                     resolved.Action = DecisionAction.Import;
                     resolved.Chosen = row.Album?.Title;
@@ -135,9 +133,8 @@ public class Worker(
                     break;
 
                 default:
-                    var outcome = await ResolveWithLayaAsync(item, row, pendingRejects, pendingNoCandidate,
+                    await ResolveWithLayaAsync(item, row, pendingRejects, pendingNoCandidate,
                         importFiles, importRecords, ct);
-                    sawImportAction |= outcome == LayaOutcome.Import;
                     break;
             }
         }
@@ -147,38 +144,9 @@ public class Worker(
             await SubmitImportsAsync(importFiles, importRecords, item, ct);
         }
 
-        if (pendingNoCandidate.Count > 0 && pendingRejects.Count == 0)
+        if (pendingNoCandidate.Count > 0 || pendingRejects.Count > 0)
         {
-            await ApplyRejectsAsync(pendingNoCandidate, item, ct);
-        }
-        else if (pendingRejects.Count > 0)
-        {
-            if (sawImportAction)
-            {
-                if (pendingNoCandidate.Count > 0)
-                {
-                    await ApplyRejectsAsync(pendingNoCandidate, item, ct);
-                }
-
-                foreach (var record in pendingRejects)
-                {
-                    var existing = store.FindLatest(item.DownloadId!, record.RowId);
-                    if (existing is not null && existing.Error is not null && existing.Error.Contains("superseded"))
-                    {
-                        logger.LogInformation("Already superseded {Name} earlier; skipping", record.RowId);
-                        continue;
-                    }
-
-                    record.Action = DecisionAction.LeaveToHuman;
-                    record.Status = DecisionStatus.SkippedDryRun;
-                    record.Error = "superseded: another row of this download was imported this cycle";
-                    store.Save(record);
-                }
-            }
-            else
-            {
-                await ApplyRejectsAsync(pendingNoCandidate.Concat(pendingRejects).ToList(), item, ct);
-            }
+            await ApplyRejectsAsync(pendingNoCandidate.Concat(pendingRejects).ToList(), item, ct);
         }
     }
 
