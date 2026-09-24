@@ -96,6 +96,33 @@
             font-weight: 700;
         }
         .qbtn:hover { border-color: var(--accent); }
+        .album-group td {
+            background: #15181d;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        .album-title {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+        .album-id { color: var(--text); margin-left: 8px; }
+        .album-count { color: var(--muted); margin-left: 8px; }
+        .restartbtn {
+            float: right;
+            background: var(--panel);
+            color: var(--accent);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 3px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .restartbtn:hover { border-color: var(--accent); }
+        .s-Restarted { color: var(--muted); font-style: italic; }
     </style>
 </head>
 <body>
@@ -189,29 +216,79 @@
 
     function render(data) {
         emptyEl.hidden = data.length !== 0;
-        rowsEl.innerHTML = data.map(rec => {
-            const confidence = rec.confidence != null ? (rec.confidence * 100).toFixed(1) + "%" : "—";
-            const err = rec.error || "";
-            const hasQ = !!(rec.questions && rec.questions.trim());
-            const row = `<tr id="d-${rec.id}">
-                <td class="time">${rec.utcTimestamp ? new Date(rec.utcTimestamp).toISOString().slice(0, 19).replace("T", " ") : ""}</td>
-                <td class="file mono">${esc(rec.fileName || "")}</td>
-                <td>${esc(rec.chosen || "")}</td>
-                <td>${esc(rec.resolver || "")}</td>
-                <td>${confidence}</td>
-                <td>${badge("b-" + rec.action, esc(rec.action || ""))}</td>
-                <td><span class="s-${rec.status}">${esc(rec.status || "")}</span></td>
-                <td class="error">${esc(err)}</td>
-                <td>${hasQ
-                    ? `<button type="button" class="qbtn" id="qbtn-${rec.id}" onclick="toggleQ(${rec.id})" title="Show question sent to the model">?</button>`
-                    : ""}</td>
-            </tr>`;
-            const detail = hasQ
-                ? `<tr class="q-detail" id="q-${rec.id}" hidden><td colspan="9"><strong>Question sent to the model</strong><pre>${prettyJson(rec.questions)}</pre></td></tr>`
-                : "";
-            return row + detail;
-        }).join("");
+
+        const groups = new Map();
+        for (const rec of data) {
+            const key = rec.downloadId || "";
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(rec);
+        }
+
+        const html = [];
+        for (const [downloadId, records] of groups) {
+            if (downloadId) {
+                html.push(`<tr class="album-group"><td colspan="9">
+                    <span class="album-title">Album import</span>
+                    <span class="album-id mono">${esc(downloadId)}</span>
+                    <span class="album-count">${records.length} row${records.length === 1 ? "" : "s"}</span>
+                    <button type="button" class="restartbtn" data-id="${esc(downloadId)}"
+                            title="Clear the done marker and re-decide this album on the next poll">Restart import</button>
+                </td></tr>`);
+            }
+
+            for (const rec of records) {
+                const confidence = rec.confidence != null ? (rec.confidence * 100).toFixed(1) + "%" : "—";
+                const err = rec.error || "";
+                const hasQ = !!(rec.questions && rec.questions.trim());
+                html.push(`<tr id="d-${rec.id}">
+                    <td class="time">${rec.utcTimestamp ? new Date(rec.utcTimestamp).toISOString().slice(0, 19).replace("T", " ") : ""}</td>
+                    <td class="file mono">${esc(rec.fileName || "")}</td>
+                    <td>${esc(rec.chosen || "")}</td>
+                    <td>${esc(rec.resolver || "")}</td>
+                    <td>${confidence}</td>
+                    <td>${badge("b-" + rec.action, esc(rec.action || ""))}</td>
+                    <td><span class="s-${rec.status}">${esc(rec.status || "")}</span></td>
+                    <td class="error">${esc(err)}</td>
+                    <td>${hasQ
+                        ? `<button type="button" class="qbtn" id="qbtn-${rec.id}" onclick="toggleQ(${rec.id})" title="Show question sent to the model">?</button>`
+                        : ""}</td>
+                </tr>`);
+                if (hasQ) {
+                    html.push(`<tr class="q-detail" id="q-${rec.id}" hidden><td colspan="9"><strong>Question sent to the model</strong><pre>${prettyJson(rec.questions)}</pre></td></tr>`);
+                }
+            }
+        }
+
+        rowsEl.innerHTML = html.join("");
         openQs.forEach(applyQS);
+    }
+
+    rowsEl.addEventListener("click", event => {
+        const button = event.target.closest(".restartbtn");
+        if (button) restartAlbum(button.dataset.id);
+    });
+
+    async function restartAlbum(downloadId) {
+        if (!downloadId) return;
+        const ok = confirm(
+            "Restart the import of this album?\n\n" +
+            "The done marker and this album's prior decisions are reset so the worker re-decides it on the next poll.");
+        if (!ok) return;
+
+        try {
+            const res = await fetch(`/api/restart?downloadId=${encodeURIComponent(downloadId)}`, { method: "POST" });
+            if (!res.ok) {
+                statusEl.textContent = res.status === 404
+                    ? "nothing to restart for this download"
+                    : `restart failed: HTTP ${res.status}`;
+                return;
+            }
+
+            statusEl.textContent = "restarted — re-deciding…";
+            refresh();
+        } catch (err) {
+            statusEl.textContent = "restart failed: " + err.message;
+        }
     }
 
     function esc(s) {

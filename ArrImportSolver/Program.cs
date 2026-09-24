@@ -23,6 +23,7 @@ builder.Services.AddHttpClient<LidarrClient>();
 builder.Services.AddHttpClient<LayaDecisionClient>()
     .ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
 builder.Services.AddSingleton<DecisionRepository>();
+builder.Services.AddSingleton<PollNotifier>();
 builder.Services.AddSingleton<IImportDecisionEngine, ImportDecisionEngine>();
 builder.Services.AddHostedService<Worker>();
 
@@ -44,5 +45,16 @@ app.MapGet("/", async context =>
 
 app.MapGet("/api/decisions", (DecisionRepository store, int limit = 200) =>
     Results.Ok(store.GetRecent(limit)));
+
+app.MapPost("/api/restart", (DecisionRepository store, PollNotifier notifier, string downloadId) =>
+{
+    if (!store.RestartAlbum(downloadId))
+    {
+        return Results.NotFound();
+    }
+
+    notifier.Signal();
+    return Results.NoContent();
+});
 
 app.Run();

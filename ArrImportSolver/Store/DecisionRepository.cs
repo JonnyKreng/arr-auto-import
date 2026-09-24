@@ -60,6 +60,7 @@ public static class DecisionStatus
     public const string SkippedDryRun = "SkippedDryRun";
     public const string Failed = "Failed";
     public const string Done = "Done";
+    public const string Restarted = "Restarted";
 }
 
 public sealed class DownloadDoneState
@@ -147,5 +148,26 @@ public class DecisionRepository
     public bool IsDownloadDone(string downloadId)
     {
         return _doneDownloads.FindById(downloadId) is not null;
+    }
+
+    // Clears the download-complete marker and flags every recorded decision for the
+    // download as Restarted so the worker re-decides the album on the next poll (the
+    // blocklist/re-decision guards in Worker look at the latest decision's status).
+    public bool RestartAlbum(string downloadId)
+    {
+        var hadDone = _doneDownloads.Delete(downloadId);
+
+        var records = _decisions
+            .Query()
+            .Where(x => x.DownloadId == downloadId)
+            .ToArray();
+
+        foreach (var record in records)
+        {
+            record.Status = DecisionStatus.Restarted;
+            _decisions.Update(record);
+        }
+
+        return hadDone || records.Length > 0;
     }
 }

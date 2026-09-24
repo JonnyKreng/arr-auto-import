@@ -14,6 +14,7 @@ public class Worker(
     LayaDecisionClient laya,
     IImportDecisionEngine engine,
     DecisionRepository store,
+    PollNotifier notifier,
     IOptionsMonitor<LidarrOptions> options,
     ILogger<Worker> logger) : BackgroundService
 {
@@ -40,6 +41,9 @@ public class Worker(
         var interval = TimeSpan.FromSeconds(Math.Max(5, options.CurrentValue.PollIntervalSeconds));
         using var timer = new PeriodicTimer(interval);
 
+        var nextTimerTick = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+        var restartTrigger = notifier.WaitAsync(stoppingToken).AsTask();
+
         logger.LogInformation(
             "ArrImportSolver started (poll {Interval}s, DryRun={DryRun}, MinConfidence={MinConfidence}, sidecar={Sidecar})",
             interval.TotalSeconds, options.CurrentValue.DryRun, options.CurrentValue.Model.MinConfidence,
@@ -47,7 +51,24 @@ public class Worker(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await timer.WaitForNextTickAsync(stoppingToken);
+            await Task.WhenAny(nextTimerTick, restartTrigger);
+
+            if (nextTimerTick.IsCompleted)
+            {
+                // Throws OperationCanceledException when the token is cancelled.
+                await nextTimerTick;
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                nextTimerTick = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+            }
+
+            if (restartTrigger.IsCompleted)
+            {
+                restartTrigger = notifier.WaitAsync(stoppingToken).AsTask();
+            }
 
             try
             {
