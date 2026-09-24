@@ -217,7 +217,7 @@ public class Worker(
         var request = new LayaDecideRequest { State = state, Questions = questions };
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await laya.DecideAsync(request, ct);
+        var response = await DecideWithRetryAsync(request, ct);
         stopwatch.Stop();
         record.LatencyMs = stopwatch.ElapsedMilliseconds;
 
@@ -294,6 +294,39 @@ public class Worker(
             row.Name, response.Answers.TryGetValue("mapping", out var m) ? m.Choice : null,
             response.Answers.TryGetValue("reject", out var r) ? r.Noul : null);
         return LayaOutcome.LeaveToHuman;
+    }
+
+    private async Task<LayaDecideResponse?> DecideWithRetryAsync(LayaDecideRequest request, CancellationToken ct)
+    {
+        var maxRetries = Math.Max(0, options.CurrentValue.SidecarMaxRetries);
+        var retryDelay = TimeSpan.FromSeconds(Math.Max(0, options.CurrentValue.SidecarRetryDelaySeconds));
+
+        LayaDecideResponse? response = null;
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            response = await laya.DecideAsync(request, ct);
+
+            if (response is null || response.Error is not null)
+            {
+                string detail = response?.Error ?? "sidecar returned no response";
+                if (attempt == maxRetries)
+                {
+                    logger.LogWarning("Decision sidecar error (attempt {Attempt}/{MaxRetries}): {Error}",
+                        attempt + 1, maxRetries + 1, detail);
+                    break;
+                }
+
+                logger.LogWarning(
+                    "Decision sidecar error (attempt {Attempt}/{MaxRetries}): {Error}; retrying in {DelaySeconds}s",
+                    attempt + 1, maxRetries + 1, detail, retryDelay.TotalSeconds);
+                await Task.Delay(retryDelay, ct);
+                continue;
+            }
+
+            break;
+        }
+
+        return response;
     }
 
     private void ApplyImport(DecisionRecord record, ManualImportResource row, MappingCandidate? candidate,

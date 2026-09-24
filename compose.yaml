@@ -13,6 +13,8 @@
       Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-20}
       Lidarr__SidecarUrl: http://sidecar:8000
       Lidarr__SidecarReadyTimeoutSeconds: ${LIDARR_SIDECAR_READY_TIMEOUT:-900}
+      Lidarr__SidecarMaxRetries: ${LIDARR_SIDECAR_RETRIES:-3}
+      Lidarr__SidecarRetryDelaySeconds: ${LIDARR_SIDECAR_RETRY_DELAY:-5}
       Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.70}
       Lidarr__Model__MaxMappingOptions: ${LIDARR_MAX_MAPPING_OPTIONS:-16}
       Ui__Port: "8080"

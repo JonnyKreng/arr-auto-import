@@ -10,6 +10,8 @@ public class LidarrOptions
     public int PollIntervalSeconds { get; set; } = 60;
     public string SidecarUrl { get; set; } = "http://sidecar:8000";
     public int SidecarReadyTimeoutSeconds { get; set; } = 900;
+    public int SidecarMaxRetries { get; set; } = 3;
+    public int SidecarRetryDelaySeconds { get; set; } = 5;
     public LidarrModelOptions Model { get; set; } = new();
 }
 
