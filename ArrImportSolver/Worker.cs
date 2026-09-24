@@ -22,6 +22,8 @@ public class Worker(
 
     private const string NoCandidatesMarker = "blocklisted release (no candidates)";
 
+    private const string NoFilesCleanupMarker = "stale queue entry (no files left to import)";
+
     private readonly Dictionary<int, IReadOnlyList<TrackResource>> _releaseTracks = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -97,12 +99,6 @@ public class Worker(
                 continue;
             }
 
-            if (store.IsDownloadDone(item.DownloadId))
-            {
-                logger.LogDebug("Download {DownloadId} already marked done; skipping", item.DownloadId);
-                continue;
-            }
-
             try
             {
                 await ProcessQueueItemAsync(item, ct);
@@ -123,6 +119,13 @@ public class Worker(
         var rows = await lidarr.GetManualImportAsync(item.DownloadId!, ct);
         if (rows.Count == 0)
         {
+            await RemoveStaleQueueItemAsync(item, ct);
+            return;
+        }
+
+        if (store.IsDownloadDone(item.DownloadId!))
+        {
+            logger.LogDebug("Download {DownloadId} already marked done; skipping", item.DownloadId);
             return;
         }
 
@@ -169,6 +172,75 @@ public class Worker(
         {
             await ApplyRejectsAsync(pendingNoCandidate.Concat(pendingRejects).ToList(), item, ct);
         }
+    }
+
+    private async Task RemoveStaleQueueItemAsync(QueueResource item, CancellationToken ct)
+    {
+        if (LooksStillInProgress(item))
+        {
+            logger.LogDebug(
+                "Queue item {QueueId} ({DownloadId}) still in progress but has no importable files yet; waiting",
+                item.Id, item.DownloadId);
+            return;
+        }
+
+        var existing = store.FindLatestByDownload(item.DownloadId!);
+        if (existing is not null &&
+            existing.Chosen == NoFilesCleanupMarker &&
+            existing.Status is DecisionStatus.Applied or DecisionStatus.SkippedDryRun)
+        {
+            logger.LogDebug("Queue item {QueueId} ({DownloadId}) already handled as stale; skipping",
+                item.Id, item.DownloadId);
+            return;
+        }
+
+        var record = NewRecord(item, DecisionResolver.Deterministic);
+        record.Action = DecisionAction.Skip;
+        record.Chosen = NoFilesCleanupMarker;
+
+        if (options.CurrentValue.DryRun)
+        {
+            record.Status = DecisionStatus.SkippedDryRun;
+            store.Save(record);
+            logger.LogInformation(
+                "[DryRun] Would remove stale queue item {QueueId} ({DownloadId}, {Title}) — no importable files left",
+                item.Id, item.DownloadId, item.Title);
+            return;
+        }
+
+        try
+        {
+            await lidarr.DeleteQueueItemAsync(item.Id, removeFromClient: true, blocklist: false, ct);
+            record.Status = DecisionStatus.Applied;
+            store.Save(record);
+            store.MarkDownloadDone(item.DownloadId!);
+            logger.LogInformation(
+                "Removed stale queue item {QueueId} ({DownloadId}, {Title}) — no importable files left",
+                item.Id, item.DownloadId, item.Title);
+        }
+        catch (Exception ex)
+        {
+            record.Status = DecisionStatus.Failed;
+            record.Error = ex.Message;
+            store.Save(record);
+            logger.LogError(ex, "Failed to remove stale queue item {QueueId} ({DownloadId})", item.Id,
+                item.DownloadId);
+        }
+    }
+
+    private static bool LooksStillInProgress(QueueResource item)
+    {
+        if (item.Sizeleft > 0)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(item.Timeleft))
+        {
+            return false;
+        }
+
+        return TimeSpan.TryParse(item.Timeleft, out var left) && left > TimeSpan.Zero;
     }
 
     private async Task<LayaOutcome> ResolveWithLayaAsync(QueueResource item, ManualImportResource row,
@@ -477,6 +549,18 @@ public class Worker(
             FilePath = row.Path,
             FileName = row.Name,
             RowId = row.Id.ToString(),
+            Resolver = resolver
+        };
+    }
+
+    private static DecisionRecord NewRecord(QueueResource item, string resolver)
+    {
+        return new DecisionRecord
+        {
+            App = "Lidarr",
+            DownloadId = item.DownloadId,
+            QueueId = item.Id,
+            FileName = item.Title,
             Resolver = resolver
         };
     }

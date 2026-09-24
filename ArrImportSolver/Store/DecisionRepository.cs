@@ -125,6 +125,15 @@ public class DecisionRepository
             .FirstOrDefault();
     }
 
+    public DecisionRecord? FindLatestByDownload(string downloadId)
+    {
+        return _decisions
+            .Query()
+            .Where(x => x.DownloadId == downloadId)
+            .OrderByDescending(x => x.UtcTimestamp)
+            .FirstOrDefault();
+    }
+
     public IReadOnlyList<DecisionRecord> GetRecent(int limit = 200)
     {
         var query = _decisions
