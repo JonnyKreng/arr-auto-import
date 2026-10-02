@@ -279,16 +279,19 @@ public class Worker(
             exactRecord.State = JsonSerializer.Serialize(engine.BuildModelState(item, row, candidates), JsonOptions);
             exactRecord.Confidence = 1d;
 
+            // The target track is already in the library, so there is nothing to import for this
+            // row. Skip it instead of importing: the remaining rows of the download may still be
+            // wanted, and reject+blocklist would throw the whole release away.
             if (deterministic.HasFile)
             {
-                exactRecord.Action = DecisionAction.RejectBlock;
+                exactRecord.Action = DecisionAction.Skip;
                 exactRecord.Chosen = $"duplicate: '{deterministic.TrackTitle}' already has a file";
-                exactRecord.Status = DecisionStatus.Pending;
-                pendingRejects.Add(exactRecord);
+                exactRecord.Status = DecisionStatus.Applied;
+                store.Save(exactRecord);
                 logger.LogInformation(
-                    "Deterministic match '{Track}' already has a file — rejecting+blocklisting download ({Name})",
+                    "Skip duplicate: '{Track}' already has a file in the library ({Name})",
                     deterministic.TrackTitle, row.Name);
-                return LayaOutcome.Reject;
+                return LayaOutcome.Skip;
             }
 
             exactRecord.Action = DecisionAction.Import;
