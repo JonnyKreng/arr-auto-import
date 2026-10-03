@@ -11,7 +11,7 @@ namespace ArrImportSolver;
 
 public class Worker(
     LidarrClient lidarr,
-    LayaDecisionClient laya,
+    LlmDecisionClient llm,
     IImportDecisionEngine engine,
     DecisionRepository store,
     PollNotifier notifier,
@@ -24,22 +24,12 @@ public class Worker(
 
     private const string NoFilesCleanupMarker = "stale queue entry (no files left to import)";
 
+    private const string UnimportableMarker = "queue entry removed (Lidarr refused every file)";
+
     private readonly Dictionary<int, IReadOnlyList<TrackResource>> _releaseTracks = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Do not request decisions until the sidecar has finished loading its model.
-        if (await laya.WaitUntilReadyAsync(stoppingToken))
-        {
-            logger.LogInformation("Decision sidecar is ready at {Sidecar}", options.CurrentValue.SidecarUrl);
-        }
-        else
-        {
-            logger.LogError(
-                "Decision sidecar never became ready at {Sidecar}; decisions will be left to a human",
-                options.CurrentValue.SidecarUrl);
-        }
-
         var interval = TimeSpan.FromSeconds(Math.Max(5, options.CurrentValue.PollIntervalSeconds));
         using var timer = new PeriodicTimer(interval);
 
@@ -47,9 +37,8 @@ public class Worker(
         var restartTrigger = notifier.WaitAsync(stoppingToken).AsTask();
 
         logger.LogInformation(
-            "ArrImportSolver started (poll {Interval}s, DryRun={DryRun}, MinConfidence={MinConfidence}, sidecar={Sidecar})",
-            interval.TotalSeconds, options.CurrentValue.DryRun, options.CurrentValue.Model.MinConfidence,
-            options.CurrentValue.SidecarUrl);
+            "ArrImportSolver started (poll {Interval}s, DryRun={DryRun}, MinConfidence={MinConfidence})",
+            interval.TotalSeconds, options.CurrentValue.DryRun, options.CurrentValue.Model.MinConfidence);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -157,7 +146,7 @@ public class Worker(
                     break;
 
                 default:
-                    await ResolveWithLayaAsync(item, row, pendingRejects, pendingNoCandidate,
+                    await ResolveWithLlmAsync(item, row, pendingRejects, pendingNoCandidate,
                         importFiles, importRecords, ct);
                     break;
             }
@@ -165,7 +154,12 @@ public class Worker(
 
         if (importFiles.Count > 0)
         {
-            await SubmitImportsAsync(importFiles, importRecords, item, ct);
+            var imported = await SubmitImportsAsync(importFiles, importRecords, item, ct);
+            if (!imported)
+            {
+                await ClearUnimportableQueueItemAsync(item, ct);
+                return;
+            }
         }
 
         if (pendingNoCandidate.Count > 0 || pendingRejects.Count > 0)
@@ -243,7 +237,7 @@ public class Worker(
         return TimeSpan.TryParse(item.Timeleft, out var left) && left > TimeSpan.Zero;
     }
 
-    private async Task<LayaOutcome> ResolveWithLayaAsync(QueueResource item, ManualImportResource row,
+    private async Task<LayaOutcome> ResolveWithLlmAsync(QueueResource item, ManualImportResource row,
         List<DecisionRecord> pendingRejects, List<DecisionRecord> pendingNoCandidate,
         List<ManualImportFile> importFiles, List<DecisionRecord> importRecords, CancellationToken ct)
     {
@@ -304,13 +298,22 @@ public class Worker(
         var state = engine.BuildModelState(item, row, candidates);
         var questions = engine.BuildQuestions(item, row, candidates);
 
-        var record = NewRecord(item, row, DecisionResolver.Laya);
+        var record = NewRecord(item, row, DecisionResolver.Llm);
         record.State = JsonSerializer.Serialize(state, JsonOptions);
         record.Candidates = JsonSerializer.Serialize(candidates, JsonOptions);
         record.Questions = JsonSerializer.Serialize(questions, JsonOptions);
         record.InputSize = record.State.Length;
 
-        var request = new LayaDecideRequest { State = state, Questions = questions };
+        var llmQuestions = questions.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new QuestionDefinition
+            {
+                Type = kvp.Value.Type,
+                Instructions = kvp.Value.Instructions,
+                Criteria = kvp.Value.Criteria?.ToDictionary(k => k.Key, v => v.Value!)
+            });
+
+        var request = new LlmDecideRequest { State = state, Questions = llmQuestions };
 
         var stopwatch = Stopwatch.StartNew();
         var response = await DecideWithRetryAsync(request, ct);
@@ -321,10 +324,10 @@ public class Worker(
         {
             record.Action = DecisionAction.LeaveToHuman;
             record.Status = DecisionStatus.Failed;
-            record.Error = response?.Error ?? "sidecar returned no response";
+            record.Error = response?.Error ?? "LLM returned no response";
             record.ModelAnswer = null;
             store.Save(record);
-            logger.LogWarning("Decision sidecar unavailable for {Name}: {Error}", row.Name, record.Error);
+            logger.LogWarning("LLM unavailable for {Name}: {Error}", row.Name, record.Error);
             return LayaOutcome.LeaveToHuman;
         }
 
@@ -392,28 +395,28 @@ public class Worker(
         return LayaOutcome.LeaveToHuman;
     }
 
-    private async Task<LayaDecideResponse?> DecideWithRetryAsync(LayaDecideRequest request, CancellationToken ct)
+    private async Task<LlmDecideResponse?> DecideWithRetryAsync(LlmDecideRequest request, CancellationToken ct)
     {
-        var maxRetries = Math.Max(0, options.CurrentValue.SidecarMaxRetries);
-        var retryDelay = TimeSpan.FromSeconds(Math.Max(0, options.CurrentValue.SidecarRetryDelaySeconds));
+        var maxRetries = Math.Max(0, options.CurrentValue.Llm.MaxRetries);
+        var retryDelay = TimeSpan.FromSeconds(Math.Max(0, options.CurrentValue.Llm.RetryDelaySeconds));
 
-        LayaDecideResponse? response = null;
+        LlmDecideResponse? response = null;
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            response = await laya.DecideAsync(request, ct);
+            response = await llm.DecideAsync(request, ct);
 
             if (response is null || response.Error is not null)
             {
-                string detail = response?.Error ?? "sidecar returned no response";
+                string detail = response?.Error ?? "LLM returned no response";
                 if (attempt == maxRetries)
                 {
-                    logger.LogWarning("Decision sidecar error (attempt {Attempt}/{MaxRetries}): {Error}",
+                    logger.LogWarning("LLM error (attempt {Attempt}/{MaxRetries}): {Error}",
                         attempt + 1, maxRetries + 1, detail);
                     break;
                 }
 
                 logger.LogWarning(
-                    "Decision sidecar error (attempt {Attempt}/{MaxRetries}): {Error}; retrying in {DelaySeconds}s",
+                    "LLM error (attempt {Attempt}/{MaxRetries}): {Error}; retrying in {DelaySeconds}s",
                     attempt + 1, maxRetries + 1, detail, retryDelay.TotalSeconds);
                 await Task.Delay(retryDelay, ct);
                 continue;
@@ -449,21 +452,12 @@ public class Worker(
         store.Save(record);
     }
 
-    private async Task SubmitImportsAsync(IReadOnlyList<ManualImportFile> importFiles,
+    private async Task<bool> SubmitImportsAsync(IReadOnlyList<ManualImportFile> importFiles,
         IReadOnlyList<DecisionRecord> importRecords, QueueResource item, CancellationToken ct)
     {
         try
         {
             await lidarr.ImportAsync(importFiles, ct);
-            foreach (var record in importRecords)
-            {
-                record.Status = DecisionStatus.Done;
-                store.Save(record);
-            }
-
-            store.MarkDownloadDone(item.DownloadId!);
-            logger.LogInformation("Imported {Count} file(s) for download {DownloadId}; marked done",
-                importFiles.Count, item.DownloadId);
         }
         catch (Exception ex)
         {
@@ -476,6 +470,95 @@ public class Worker(
 
             logger.LogError(ex, "Import command failed for download {DownloadId} ({Count} file(s))", item.DownloadId,
                 importFiles.Count);
+            return false;
+        }
+
+        // Lidarr answers a ManualImport command with 201 and "successful" even when it silently skips
+        // every file carrying a permanent rejection (an incomplete release gets "Has fewer tracks than
+        // existing release" / "Has missing tracks"). Re-reading the rows tells us what really happened.
+        var remaining = await lidarr.GetManualImportAsync(item.DownloadId!, ct);
+        if (remaining.Count > 0)
+        {
+            var reasons = remaining
+                .SelectMany(r => r.Rejections ?? new List<Rejection>())
+                .Select(r => r.Reason)
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Distinct()
+                .ToList();
+
+            var detail = reasons.Count > 0 ? string.Join("; ", reasons) : "no rejection reason reported";
+
+            foreach (var record in importRecords)
+            {
+                record.Status = DecisionStatus.Failed;
+                record.Error =
+                    $"Lidarr accepted the command but left {remaining.Count} file(s) unimported ({detail})";
+                store.Save(record);
+            }
+
+            logger.LogWarning(
+                "Import for download {DownloadId} was accepted but imported nothing: {Count} file(s) still pending ({Detail})",
+                item.DownloadId, remaining.Count, detail);
+            return false;
+        }
+
+        foreach (var record in importRecords)
+        {
+            record.Status = DecisionStatus.Done;
+            store.Save(record);
+        }
+
+        store.MarkDownloadDone(item.DownloadId!);
+        logger.LogInformation("Imported {Count} file(s) for download {DownloadId}; marked done",
+            importFiles.Count, item.DownloadId);
+        return true;
+    }
+
+    private async Task ClearUnimportableQueueItemAsync(QueueResource item, CancellationToken ct)
+    {
+        var existing = store.FindLatestByDownload(item.DownloadId!);
+        if (existing is not null &&
+            existing.Chosen == UnimportableMarker &&
+            existing.Status is DecisionStatus.Applied or DecisionStatus.SkippedDryRun)
+        {
+            logger.LogDebug("Queue item {QueueId} ({DownloadId}) already cleared as unimportable; skipping",
+                item.Id, item.DownloadId);
+            return;
+        }
+
+        var record = NewRecord(item, DecisionResolver.Deterministic);
+        record.Action = DecisionAction.Skip;
+        record.Chosen = UnimportableMarker;
+
+        if (options.CurrentValue.DryRun)
+        {
+            record.Status = DecisionStatus.SkippedDryRun;
+            store.Save(record);
+            logger.LogInformation(
+                "[DryRun] Would remove queue item {QueueId} ({DownloadId}, {Title}) — Lidarr refuses every file",
+                item.Id, item.DownloadId, item.Title);
+            return;
+        }
+
+        try
+        {
+            // No blocklist: the release itself is fine, this download is just an incomplete copy, so
+            // Lidarr must stay free to grab a complete one later. Files are left on disk.
+            await lidarr.DeleteQueueItemAsync(item.Id, removeFromClient: false, blocklist: false, ct);
+            record.Status = DecisionStatus.Applied;
+            store.Save(record);
+            store.MarkDownloadDone(item.DownloadId!);
+            logger.LogInformation(
+                "Removed queue item {QueueId} ({DownloadId}, {Title}) — Lidarr refused every file; release left unblocked",
+                item.Id, item.DownloadId, item.Title);
+        }
+        catch (Exception ex)
+        {
+            record.Status = DecisionStatus.Failed;
+            record.Error = ex.Message;
+            store.Save(record);
+            logger.LogError(ex, "Failed to remove unimportable queue item {QueueId} ({DownloadId})", item.Id,
+                item.DownloadId);
         }
     }
 

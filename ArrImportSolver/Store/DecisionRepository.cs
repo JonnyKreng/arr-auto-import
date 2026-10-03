@@ -74,6 +74,7 @@ public static class DecisionResolver
 {
     public const string Deterministic = "Deterministic";
     public const string Laya = "Laya";
+    public const string Llm = "Llm";
 }
 
 public class DecisionRepository

@@ -145,7 +145,9 @@ public class LidarrClient
             response.EnsureSuccessStatusCode();
         }
 
-        _logger.LogInformation("Lidarr queue item {QueueId} removed (and blocklisted)", queueId);
+        _logger.LogInformation(
+            "Lidarr queue item {QueueId} removed (removeFromClient={RemoveFromClient}, blocklist={Blocklist})",
+            queueId, removeFromClient, blocklist);
     }
 
     private static string Bool(bool value) => value ? "true" : "false";

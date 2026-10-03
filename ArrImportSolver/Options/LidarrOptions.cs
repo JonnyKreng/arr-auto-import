@@ -8,11 +8,19 @@ public class LidarrOptions
     public string Key { get; set; } = "";
     public bool DryRun { get; set; } = true;
     public int PollIntervalSeconds { get; set; } = 60;
-    public string SidecarUrl { get; set; } = "http://sidecar:8000";
-    public int SidecarReadyTimeoutSeconds { get; set; } = 900;
-    public int SidecarMaxRetries { get; set; } = 3;
-    public int SidecarRetryDelaySeconds { get; set; } = 5;
+    public LlmOptions Llm { get; set; } = new();
     public LidarrModelOptions Model { get; set; } = new();
+}
+
+public class LlmOptions
+{
+    public string Url { get; set; } = "";
+    public string ApiKey { get; set; } = "";
+    public string Model { get; set; } = "";
+    public int MaxTokens { get; set; } = 4096;
+    public int TimeoutSeconds { get; set; } = 600;
+    public int MaxRetries { get; set; } = 3;
+    public int RetryDelaySeconds { get; set; } = 5;
 }
 
 public class LidarrModelOptions

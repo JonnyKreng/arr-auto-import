@@ -4,17 +4,18 @@
     build:
       context: .
       dockerfile: ArrImportSolver/Dockerfile
-    depends_on:
-      - sidecar
     environment:
       Lidarr__Url: ${LIDARR_URL:?set LIDARR_URL}
       Lidarr__Key: ${LIDARR_KEY:?set LIDARR_KEY}
       Lidarr__DryRun: ${LIDARR_DRYRUN:-true}
       Lidarr__PollIntervalSeconds: ${LIDARR_POLL_INTERVAL:-20}
-      Lidarr__SidecarUrl: http://sidecar:8000
-      Lidarr__SidecarReadyTimeoutSeconds: ${LIDARR_SIDECAR_READY_TIMEOUT:-900}
-      Lidarr__SidecarMaxRetries: ${LIDARR_SIDECAR_RETRIES:-3}
-      Lidarr__SidecarRetryDelaySeconds: ${LIDARR_SIDECAR_RETRY_DELAY:-5}
+      Lidarr__Llm__Url: ${LLM_URL:-}
+      Lidarr__Llm__ApiKey: ${LLM_API_KEY:-}
+      Lidarr__Llm__Model: ${LLM_MODEL:-}
+      Lidarr__Llm__MaxTokens: ${LLM_MAX_TOKENS:-4096}
+      Lidarr__Llm__TimeoutSeconds: ${LLM_TIMEOUT:-600}
+      Lidarr__Llm__MaxRetries: ${LLM_MAX_RETRIES:-3}
+      Lidarr__Llm__RetryDelaySeconds: ${LLM_RETRY_DELAY:-5}
       Lidarr__Model__MinConfidence: ${LIDARR_MIN_CONFIDENCE:-0.70}
       Lidarr__Model__MaxMappingOptions: ${LIDARR_MAX_MAPPING_OPTIONS:-16}
       Ui__Port: "8080"
@@ -23,31 +24,5 @@
     volumes:
       - decisions-data:/app/data
 
-  sidecar:
-    image: sidecar
-    build:
-      context: LayaSidecar
-      dockerfile: Dockerfile
-    environment:
-      DECISION_ENGINE: ${DECISION_ENGINE:-llm}
-      # llm backend (default): OpenAI-compatible hosted chat model for the typed questions.
-      # The values below point at the Ollama instance on 192.168.2.2 (gemma4 12B Q4); no key needed.
-      LLM_URL: ${LLM_URL:-}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-}
-      # laya backend (DECISION_ENGINE=laya): parallel small model, calibrated confidence.
-      LAYA_MODEL: ${LAYA_MODEL:-typed-decisions}
-      LAYA_DEVICE: ${LAYA_DEVICE:-auto}
-      LAYA_PRELOAD: ${LAYA_PRELOAD:-}
-      LAYA_CHUNK_SIZE: ${LAYA_CHUNK_SIZE:-5}
-      LAYA_TOURNAMENT_ADVANCE: ${LAYA_TOURNAMENT_ADVANCE:-2}
-      LAYA_TOURNAMENT_CONFIDENCE: ${LAYA_TOURNAMENT_CONFIDENCE:-all}
-      HF_TOKEN: ${HF_TOKEN:-}
-    ports:
-      - "${SIDECAR_PORT:-8000}:8000"
-    volumes:
-      - model-cache:/root/.cache/huggingface
-
 volumes:
   decisions-data:
-  model-cache:
