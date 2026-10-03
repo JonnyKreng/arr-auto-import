@@ -19,20 +19,15 @@ public sealed class ManualImportResource
     public List<TrackResource>? Tracks { get; set; }
     public string? DownloadId { get; set; }
     public string? FolderName { get; set; }
-    public string? SourceFolder { get; set; }
     public bool AdditionalFile { get; set; }
-    public bool IsManualImport { get; set; }
 }
 
 public sealed class TrackResource
 {
     public int Id { get; set; }
-    public int? AlbumId { get; set; }
     public string? Title { get; set; }
     public JsonElement? TrackNumber { get; set; }
-    public JsonElement? AbsoluteTrackNumber { get; set; }
     public int Duration { get; set; }
-    public int? MediumNumber { get; set; }
     public bool HasFile { get; set; }
 }
 
@@ -44,8 +39,6 @@ public sealed class ManualImportFile
     public int AlbumReleaseId { get; set; }
     public List<int>? TrackIds { get; set; }
     public QualityModel? Quality { get; set; }
-    public string? ReleaseGroup { get; set; }
-    public int IndexerFlags { get; set; }
     public string? DownloadId { get; set; }
     public bool DisableReleaseSwitching { get; set; }
 }

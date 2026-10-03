@@ -4,17 +4,12 @@ public sealed class ArtistResource
 {
     public int Id { get; set; }
     public string? ArtistName { get; set; }
-    public string? ForeignArtistId { get; set; }
-    public string? Status { get; set; }
 }
 
 public sealed class AlbumResource
 {
     public int Id { get; set; }
     public string? Title { get; set; }
-    public string? ForeignAlbumId { get; set; }
-    public string? ReleaseDate { get; set; }
-    public string? AlbumType { get; set; }
     public List<AlbumReleaseResource>? Releases { get; set; }
 }
 
@@ -24,9 +19,6 @@ public sealed class AlbumReleaseResource
     public string? ForeignReleaseId { get; set; }
     public string? Title { get; set; }
     public string? ReleaseDate { get; set; }
-    public List<string>? Label { get; set; }
-    public List<string>? Country { get; set; }
-    public bool? Monitored { get; set; }
 }
 
 public sealed class QualityModel

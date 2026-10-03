@@ -23,6 +23,13 @@ public sealed record MappingCandidate(
     int TrackDurationMs = 0,
     bool HasFile = false);
 
+public sealed class QuestionDefinition
+{
+    public string Type { get; set; } = "choice";
+    public string? Instructions { get; set; }
+    public Dictionary<string, string>? Criteria { get; set; }
+}
+
 public interface IImportDecisionEngine
 {
     IReadOnlyList<RowClassification> Classify(IReadOnlyList<ManualImportResource> rows);
@@ -40,7 +47,7 @@ public interface IImportDecisionEngine
     Task<IReadOnlyList<MappingCandidate>> BuildCandidatesAsync(ManualImportResource row,
         IReadOnlyDictionary<int, IReadOnlyList<TrackResource>> releaseTracks, CancellationToken ct);
 
-    Dictionary<string, LayaQuestion> BuildQuestions(QueueResource queueItem, ManualImportResource row,
+    Dictionary<string, QuestionDefinition> BuildQuestions(QueueResource queueItem, ManualImportResource row,
         IReadOnlyList<MappingCandidate> candidates);
 
     object BuildModelState(QueueResource queueItem, ManualImportResource row,

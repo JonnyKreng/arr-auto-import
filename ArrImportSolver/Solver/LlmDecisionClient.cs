@@ -317,13 +317,6 @@ public class LlmDecideRequest
     public Dictionary<string, QuestionDefinition> Questions { get; set; } = new();
 }
 
-public class QuestionDefinition
-{
-    public string Type { get; set; } = "choice";
-    public string? Instructions { get; set; }
-    public Dictionary<string, string>? Criteria { get; set; }
-}
-
 public class LlmDecideResponse
 {
     public string? Error { get; set; }

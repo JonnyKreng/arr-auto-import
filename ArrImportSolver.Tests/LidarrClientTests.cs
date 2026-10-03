@@ -78,18 +78,6 @@ public class LidarrClientTests
     }
 
     [Fact]
-    public async Task GetAlbumTracksAsync_CallsCorrectEndpoint()
-    {
-        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("[]")
-        });
-        var client = CreateClient(handler);
-        await client.GetAlbumTracksAsync(123, CancellationToken.None);
-        Assert.Contains("albumId=123", handler.LastUri);
-    }
-
-    [Fact]
     public async Task GetReleaseTracksAsync_CallsCorrectEndpoint()
     {
         var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)

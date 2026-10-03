@@ -106,7 +106,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
         }
     }
 
-    public Dictionary<string, LayaQuestion> BuildQuestions(QueueResource queueItem, ManualImportResource row,
+    public Dictionary<string, QuestionDefinition> BuildQuestions(QueueResource queueItem, ManualImportResource row,
         IReadOnlyList<MappingCandidate> candidates)
     {
         var tracks = row.Tracks;
@@ -119,7 +119,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
         // budget, truncating the track number and duration that identify each option.
         var hasOffTargetRelease = candidates.Any(c => c.AlbumReleaseId != row.AlbumReleaseId);
 
-        var criteria = new Dictionary<string, string?>();
+        var criteria = new Dictionary<string, string>();
         foreach (var candidate in candidates)
         {
             var description = candidate.Label;
@@ -145,7 +145,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
             $" The download archive name is {downloadedName}; the file name is '{ToAscii(row.Name)}'" +
             (trackSummary != null ? $" and contains: {trackSummary}." : ".");
 
-        var mappingInstructions =
+var mappingInstructions =
              $"""
              We want to import a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
              {downloadedInfo} Decide by TITLE and LENGTH first: the matching candidate 
@@ -153,11 +153,6 @@ public class ImportDecisionEngine : IImportDecisionEngine
              disc or a re-numbering). A radio edit or live version can be shorter or longer, so the title is the decisive 
              signal and the length confirms it. If no candidate shares the title and length, answer no_match.
              """;
-
-//             $"""
-//             We want to match a downloaded file into the album {targetAlbum}. Which track of that album is the downloaded file?
-//             {downloadedInfo}
-//             """;
 
         var rejectInstructions =
             $"""
@@ -172,7 +167,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
                 string.Join("; ", candidates.Select(c => $"{c.Key}: {c.Label}")) + ".";
         }
 
-        return new Dictionary<string, LayaQuestion>
+        return new Dictionary<string, QuestionDefinition>
         {
             ["mapping"] = new()
             {
@@ -184,7 +179,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
             {
                 Type = "noul",
                 Instructions = rejectInstructions,
-                Criteria = new Dictionary<string, string?>
+                Criteria = new Dictionary<string, string>
                 {
                     ["false"] =
                         $"No - the download is the album we want to import ({targetAlbum}); keep it and map its tracks.",

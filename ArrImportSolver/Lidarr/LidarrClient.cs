@@ -48,21 +48,6 @@ public class LidarrClient
         }
     }
 
-    public async Task<IReadOnlyList<TrackResource>> GetAlbumTracksAsync(int albumId, CancellationToken ct)
-    {
-        var url = $"/api/v1/track?albumId={albumId}";
-        try
-        {
-            var tracks = await _http.GetFromJsonAsync<List<TrackResource>>(new Uri(Base, url), JsonOptions, ct);
-            return tracks ?? new List<TrackResource>();
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Failed to fetch tracks for album {AlbumId}", albumId);
-            throw;
-        }
-    }
-
     public async Task<IReadOnlyList<TrackResource>> GetReleaseTracksAsync(int albumReleaseId, CancellationToken ct)
     {
         var url = $"/api/v1/track?albumReleaseId={albumReleaseId}";
@@ -74,20 +59,6 @@ public class LidarrClient
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Failed to fetch tracks for album release {AlbumReleaseId}", albumReleaseId);
-            throw;
-        }
-    }
-
-    public async Task<AlbumResource?> GetAlbumAsync(int albumId, CancellationToken ct)
-    {
-        var url = $"/api/v1/album/{albumId}";
-        try
-        {
-            return await _http.GetFromJsonAsync<AlbumResource>(new Uri(Base, url), JsonOptions, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Failed to fetch album {AlbumId}", albumId);
             throw;
         }
     }
