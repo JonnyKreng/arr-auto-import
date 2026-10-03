@@ -25,4 +25,8 @@
         <Link>.dockerignore</Link>
       </Content>
     </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="ArrImportSolver.Tests" />
+    </ItemGroup>
 </Project>

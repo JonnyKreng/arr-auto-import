@@ -68,9 +68,12 @@ public class LlmDecisionClient
         var body = JsonSerializer.Serialize(payload, JsonOptions);
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
 
+        HttpRequestMessage? requestMessage = null;
         if (!string.IsNullOrEmpty(opts.ApiKey))
         {
-            content.Headers.Add("Authorization", $"Bearer {opts.ApiKey}");
+            requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
+            requestMessage.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);
+            requestMessage.Content = content;
         }
 
         try
@@ -78,7 +81,9 @@ public class LlmDecisionClient
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(opts.TimeoutSeconds));
 
-            using var httpResponse = await _http.PostAsync(url, content, timeout.Token);
+            using var httpResponse = requestMessage != null
+                ? await _http.SendAsync(requestMessage, timeout.Token)
+                : await _http.PostAsync(url, content, timeout.Token);
             if (httpResponse.IsSuccessStatusCode)
             {
                 var result = await httpResponse.Content.ReadFromJsonAsync<LlmChatResponse>(JsonOptions, timeout.Token);

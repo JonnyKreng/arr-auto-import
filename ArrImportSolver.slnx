@@ -3,4 +3,5 @@
     <File Path="compose.yaml" />
   </Folder>
   <Project Path="ArrImportSolver/ArrImportSolver.csproj" />
+  <Project Path="ArrImportSolver.Tests/ArrImportSolver.Tests.csproj" />
 </Solution>
