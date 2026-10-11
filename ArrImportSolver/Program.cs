@@ -24,6 +24,7 @@ builder.Services.AddHttpClient<LlmDecisionClient>()
     .ConfigureHttpClient(c => c.Timeout = Timeout.InfiniteTimeSpan);
 builder.Services.AddSingleton<DecisionRepository>();
 builder.Services.AddSingleton<PollNotifier>();
+builder.Services.AddSingleton<WorkerProgress>();
 builder.Services.AddSingleton<IImportDecisionEngine, ImportDecisionEngine>();
 builder.Services.AddHostedService<Worker>();
 
@@ -45,6 +46,9 @@ app.MapGet("/", async context =>
 
 app.MapGet("/api/decisions", (DecisionRepository store, int limit = 200) =>
     Results.Ok(store.GetRecent(limit)));
+
+// What the worker is evaluating right now, and how much of the queue is left in this cycle.
+app.MapGet("/api/progress", (WorkerProgress progress) => Results.Ok(progress.Current));
 
 app.MapPost("/api/restart", (DecisionRepository store, PollNotifier notifier, string downloadId) =>
 {

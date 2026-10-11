@@ -15,6 +15,7 @@ public class Worker(
     IImportDecisionEngine engine,
     DecisionRepository store,
     PollNotifier notifier,
+    WorkerProgress progress,
     IOptionsMonitor<LidarrOptions> options,
     ILogger<Worker> logger) : BackgroundService
 {
@@ -86,12 +87,20 @@ public class Worker(
         _releaseTracks.Clear();
         var queue = await lidarr.GetQueueAsync(ct);
 
-        foreach (var item in queue)
+        // Only entries the worker would actually look at, so the count shown in the UI matches the
+        // work being done rather than every row Lidarr happens to return.
+        var work = queue.Where(item => !string.IsNullOrEmpty(item.DownloadId)).ToList();
+        progress.BeginCycle(work.Count);
+
+        if (work.Count == 0)
         {
-            if (string.IsNullOrEmpty(item.DownloadId))
-            {
-                continue;
-            }
+            progress.EndCycle();
+        }
+
+        var index = 0;
+        foreach (var item in work)
+        {
+            progress.BeginItem(index, item.Title, item.DownloadId);
 
             try
             {
@@ -105,7 +114,13 @@ public class Worker(
             {
                 logger.LogError(ex, "Failed to process queue item {QueueId} ({DownloadId})", item.Id, item.DownloadId);
             }
+            finally
+            {
+                index++;
+            }
         }
+
+        progress.EndCycle();
     }
 
     private async Task ProcessQueueItemAsync(QueueResource item, CancellationToken ct)
@@ -131,6 +146,7 @@ public class Worker(
         foreach (var classification in engine.Classify(rows))
         {
             var row = classification.Row;
+            progress.SetCurrentFile(row.Name);
 
             switch (classification.Kind)
             {
