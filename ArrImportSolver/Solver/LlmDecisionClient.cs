@@ -208,7 +208,8 @@ public class LlmDecisionClient
                 {
                     Type = "noul",
                     Noul = Math.Round(Clamp(noul, 0.0, 1.0), 4),
-                    Confidence = Math.Round(Clamp(confidence, 0.0, 1.0), 4)
+                    Confidence = Math.Round(Clamp(confidence, 0.0, 1.0), 4),
+                    Raw = content
                 }
             };
         }
@@ -222,7 +223,8 @@ public class LlmDecisionClient
             {
                 Type = "choice",
                 Choice = answerChoice,
-                Confidence = Math.Round(Clamp(answerConfidence, 0.0, 1.0), 4)
+                Confidence = Math.Round(Clamp(answerConfidence, 0.0, 1.0), 4),
+                Raw = content
             }
         };
     }
@@ -329,6 +331,9 @@ public class LlmAnswer
     public string? Choice { get; set; }
     public double? Noul { get; set; }
     public double Confidence { get; set; }
+
+    /// <summary>Raw message content returned by the model, for diagnostics.</summary>
+    public string? Raw { get; set; }
 }
 
 internal class LlmChatResponse

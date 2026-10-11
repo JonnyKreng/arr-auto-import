@@ -86,6 +86,35 @@ public class LlmDecisionClientTests
     }
 
     [Fact]
+    public async Task DecideAsync_CapturesRawModelOutput()
+    {
+        var response = new
+        {
+            choices = new[]
+            {
+                new { message = new { role = "assistant", content = "Here you go: {\"choice\":\"option_0\",\"confidence\":0.95}" }, finish_reason = "stop" }
+            }
+        };
+        var handler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(response))
+        });
+        var client = CreateClient(handler);
+        var request = new LlmDecideRequest
+        {
+            Questions = new Dictionary<string, QuestionDefinition>
+            {
+                ["mapping"] = new() { Type = "choice", Instructions = "map it", Criteria = new Dictionary<string, string?> { ["option_0"] = "track" } }
+            }
+        };
+        var result = await client.DecideAsync(request, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.Null(result.Error);
+        Assert.Equal("Here you go: {\"choice\":\"option_0\",\"confidence\":0.95}", result.Answers["mapping"].Raw);
+        Assert.Equal("option_0", result.Answers["mapping"].Choice);
+    }
+
+    [Fact]
     public async Task DecideAsync_HandlesNoulResponse()
     {
         var response = new

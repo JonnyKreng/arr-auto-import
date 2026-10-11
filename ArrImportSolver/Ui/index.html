@@ -240,6 +240,8 @@
                 const confidence = rec.confidence != null ? (rec.confidence * 100).toFixed(1) + "%" : "—";
                 const err = rec.error || "";
                 const hasQ = !!(rec.questions && rec.questions.trim());
+                const hasRaw = !!(rec.modelRaw && rec.modelRaw.trim());
+                const showDetail = hasQ || hasRaw;
                 html.push(`<tr id="d-${rec.id}">
                     <td class="time">${rec.utcTimestamp ? new Date(rec.utcTimestamp).toISOString().slice(0, 19).replace("T", " ") : ""}</td>
                     <td class="file mono">${esc(rec.fileName || "")}</td>
@@ -249,12 +251,16 @@
                     <td>${badge("b-" + rec.action, esc(rec.action || ""))}</td>
                     <td><span class="s-${rec.status}">${esc(rec.status || "")}</span></td>
                     <td class="error">${esc(err)}</td>
-                    <td>${hasQ
-                        ? `<button type="button" class="qbtn" id="qbtn-${rec.id}" onclick="toggleQ(${rec.id})" title="Show question sent to the model">?</button>`
+                    <td>${showDetail
+                        ? `<button type="button" class="qbtn" id="qbtn-${rec.id}" onclick="toggleQ(${rec.id})" title="Show the model question and answer">?</button>`
                         : ""}</td>
                 </tr>`);
-                if (hasQ) {
-                    html.push(`<tr class="q-detail" id="q-${rec.id}" hidden><td colspan="9"><strong>Question sent to the model</strong><pre>${prettyJson(rec.questions)}</pre></td></tr>`);
+                if (showDetail) {
+                    html.push(`<tr class="q-detail" id="q-${rec.id}" hidden><td colspan="9">${hasQ
+                        ? `<strong>Question sent to the model</strong><pre>${prettyJson(rec.questions)}</pre>`
+                        : ""}${hasRaw
+                        ? `<strong>Model output</strong><pre>${prettyJson(rec.modelRaw)}</pre>`
+                        : ""}</td></tr>`);
                 }
             }
         }

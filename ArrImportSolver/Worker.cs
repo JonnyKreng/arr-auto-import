@@ -337,6 +337,9 @@ public class Worker(
         }
 
         record.ModelAnswer = JsonSerializer.Serialize(response, JsonOptions);
+        record.ModelRaw = JsonSerializer.Serialize(
+            response.Answers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Raw),
+            JsonOptions);
 
         var threshold = options.CurrentValue.Model.MinConfidence;
 

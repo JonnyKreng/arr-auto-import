@@ -30,6 +30,9 @@ public sealed class DecisionRecord
 
     public string? ModelAnswer { get; set; }
 
+    /// <summary>Raw model output, one entry per question, as received.</summary>
+    public string? ModelRaw { get; set; }
+
     public string Action { get; set; } = "";
 
     public string Status { get; set; } = "";
