@@ -54,17 +54,50 @@ public class LlmDecisionClient
     {
         var opts = _options.CurrentValue.Llm;
         var url = $"{opts.Url.TrimEnd('/')}/v1/chat/completions";
-
         var messages = BuildMessages(request);
-        var payload = new
-        {
-            model = opts.Model,
-            messages,
-            temperature = 0,
-            max_tokens = opts.MaxTokens,
-            response_format = new { type = "json_object" }
-        };
 
+        // A reasoning model spends part of its output budget "thinking" before it writes any JSON.
+        // The mapping prompt carries hundreds of options, so the model wants to think about more
+        // candidates and the configured default budget is easily used up by reasoning alone, cutting
+        // the answer off with finish_reason=length. Size the initial budget to the prompt, and when
+        // the model is still cut off, double the budget and ask again (bounded, non-truncated)
+        // responses never retry.
+        var promptTokens = EstimateTokens(messages);
+        var maxTokens = Math.Max(opts.MaxTokens, Math.Min(MaxInitialTokens, promptTokens));
+
+        for (var escalations = MaxEscalations; ; )
+        {
+            var outcome = await SendAsync(url, qid, qdef, messages, maxTokens, ct);
+
+            if (outcome.Error is null || escalations == 0 || !IsLengthTruncation(outcome.Error))
+            {
+                return outcome;
+            }
+
+            var doubled = Math.Min(MaxEscalatedTokens, (long)maxTokens * 2);
+            if (doubled <= maxTokens)
+            {
+                return outcome;
+            }
+
+            _logger.LogWarning(
+                "LLM answer for question {QuestionId} was cut off (finish_reason=length); retrying with " +
+                "a larger output budget ({From} -> {To})", qid, maxTokens, doubled);
+
+            maxTokens = (int)doubled;
+            escalations--;
+        }
+    }
+
+    private const int MaxInitialTokens = 8192;
+    private const int MaxEscalatedTokens = 32768;
+    private const int MaxEscalations = 2;
+
+    private async Task<AskOutcome> SendAsync(string url, string qid, QuestionDefinition qdef,
+        List<Dictionary<string, string>> messages, int maxTokens, CancellationToken ct)
+    {
+        var opts = _options.CurrentValue.Llm;
+        var payload = BuildPayload(opts, messages, maxTokens);
         var requestBody = JsonSerializer.Serialize(payload, JsonOptions);
         using var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
 
@@ -112,7 +145,8 @@ public class LlmDecisionClient
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("LLM timed out after {Timeout}s for question {QuestionId}", opts.TimeoutSeconds, qid);
+            _logger.LogWarning("LLM timed out after {Timeout}s with {MaxTokens} output tokens",
+                opts.TimeoutSeconds, maxTokens);
             return new AskOutcome { Error = $"LLM timed out after {opts.TimeoutSeconds}s" };
         }
         catch (Exception ex)
@@ -120,6 +154,46 @@ public class LlmDecisionClient
             _logger.LogWarning(ex, "LLM call failed at {Url} for question {QuestionId}", url, qid);
             return new AskOutcome { Error = ex.Message };
         }
+    }
+
+    private static Dictionary<string, object?> BuildPayload(LlmOptions opts,
+        List<Dictionary<string, string>> messages, int maxTokens)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = opts.Model,
+            ["messages"] = messages,
+            ["temperature"] = 0,
+            ["max_tokens"] = maxTokens,
+            ["response_format"] = new { type = "json_object" }
+        };
+
+        if (opts.NumCtx > 0)
+        {
+            payload["options"] = new Dictionary<string, int> { ["num_ctx"] = opts.NumCtx };
+        }
+
+        return payload;
+    }
+
+    /// <summary>Rough prompt size (chars / 4) to pick a starting output budget for reasoning models.</summary>
+    private static int EstimateTokens(List<Dictionary<string, string>> messages)
+    {
+        var length = 0;
+        foreach (var message in messages)
+        {
+            foreach (var pair in message)
+            {
+                length += pair.Value.Length;
+            }
+        }
+
+        return length / 4;
+    }
+
+    private static bool IsLengthTruncation(string? error)
+    {
+        return error is not null && error.Contains("finish_reason=length", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<Dictionary<string, string>> BuildMessages(LlmDecideRequest request)
@@ -307,7 +381,20 @@ public class LlmDecisionClient
             }
 
             var end = FindObjectEnd(text, i);
-            if (end < 0) return firstObject;
+            if (end < 0)
+            {
+                // The token limit cut the response mid-object. Models that run out of budget usually
+                // stop right after a complete key/value pair, so closing a brace or two often turns
+                // the truncated fragment into a usable answer. Only accept a repair that actually
+                // carries one of the answer keys.
+                var repaired = TryRepairTruncatedObject(text, i, answerKeys);
+                if (repaired is not null)
+                {
+                    return repaired;
+                }
+
+                return firstObject;
+            }
 
             var parsed = TryDeserializeObject(text[i..(end + 1)]);
             if (parsed is not null)
@@ -374,6 +461,35 @@ public class LlmDecisionClient
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Tries to salvage a JSON object that was cut off by the response token limit (finish_reason
+    /// "length"). The truncation point is almost always right after a complete key/value pair, so
+    /// appending a couple of closing braces is enough to make the fragment valid.
+    /// </summary>
+    private static Dictionary<string, object>? TryRepairTruncatedObject(string text, int start,
+        IReadOnlyCollection<string> answerKeys)
+    {
+        var slice = text[start..].TrimEnd();
+        if (slice.Length == 0)
+        {
+            return null;
+        }
+
+        // Truncation usually lands right after a complete key/value pair, so only brace closure is
+        // attempted (a cut inside a string or number is not repairable and stays an error).
+        for (var close = 1; close <= 4; close++)
+        {
+            var attempt = slice + new string('}', close);
+            var parsed = TryDeserializeObject(attempt);
+            if (parsed is not null && answerKeys.Any(parsed.ContainsKey))
+            {
+                return parsed;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Reads Ollama's {"error": "..."} envelope, which it returns with a 200 status.</summary>

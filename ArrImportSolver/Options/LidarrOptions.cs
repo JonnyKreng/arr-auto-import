@@ -21,6 +21,13 @@ public class LlmOptions
     public int TimeoutSeconds { get; set; } = 600;
     public int MaxRetries { get; set; } = 3;
     public int RetryDelaySeconds { get; set; } = 5;
+
+    /// <summary>
+    /// Context window (in tokens) to request from Ollama via the num_ctx option. Ollama defaults to
+    /// a small context; a mapping prompt with hundreds of options plus the answer budget can exceed
+    /// it, which silently truncates the input. 0 sends no num_ctx and uses the server default.
+    /// </summary>
+    public int NumCtx { get; set; } = 32768;
 }
 
 public class LidarrModelOptions
