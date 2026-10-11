@@ -24,6 +24,11 @@ public class Worker(
 
     private const string NoFilesCleanupMarker = "stale queue entry (no files left to import)";
 
+    /// The mapping option that means "this file is not a track of the target album at all".
+    private const string NoMatchChoice = "no_match";
+
+    private const string NoMatchChosen = "blocklisted: matches no track of the target album";
+
     private const string UnimportableMarker = "queue entry removed (Lidarr refused every file)";
 
     private readonly Dictionary<int, IReadOnlyList<TrackResource>> _releaseTracks = new();
@@ -335,63 +340,66 @@ public class Worker(
 
         var threshold = options.CurrentValue.Model.MinConfidence;
 
-        // Question 1: is this the album we want to import? A confident "different release" gates
-        // everything else - the download is blocklisted rather than force-mapped into the target album.
-        if (response.Answers.TryGetValue("reject", out var reject))
-        {
-            var differentRelease = (reject.Noul ?? 0d) >= 0.5d;
-            if (differentRelease && reject.Confidence >= threshold)
-            {
-                record.Action = DecisionAction.RejectBlock;
-                record.Chosen = "blocklisted: not the target album";
-                record.Confidence = reject.Confidence;
-                record.Status = DecisionStatus.Pending;
-                pendingRejects.Add(record);
-                logger.LogInformation(
-                    "Marks for reject+blocklist: {Name} is not the target album (confidence {Confidence:0.00})",
-                    row.Name, reject.Confidence);
-                return LayaOutcome.Reject;
-            }
-        }
-
-        // Question 2: which track of the target album is this file?
+        // Which track of the target album is this file? "no_match" is the model telling us the file
+        // is not a track of the target album at all (different album/artist, or garbage), which is
+        // the signal to reject+blocklist it rather than force-map it onto something close.
         if (response.Answers.TryGetValue("mapping", out var mapping) && mapping.Choice is not null)
         {
-            var chosen = candidates.FirstOrDefault(c => c.Key == mapping.Choice);
-            if (chosen is not null && mapping.Confidence >= threshold)
+            if (mapping.Choice == NoMatchChoice)
             {
-                if (chosen.HasFile)
+                if (mapping.Confidence >= threshold)
                 {
                     record.Action = DecisionAction.RejectBlock;
-                    record.Chosen = $"duplicate: '{chosen.TrackTitle}' already has a file";
+                    record.Chosen = NoMatchChosen;
                     record.Confidence = mapping.Confidence;
                     record.Status = DecisionStatus.Pending;
                     pendingRejects.Add(record);
                     logger.LogInformation(
-                        "Selected track '{Track}' already has a file — rejecting+blocklisting download ({Name}, confidence {Confidence:0.00})",
-                        chosen.TrackTitle, row.Name, mapping.Confidence);
+                        "Marks for reject+blocklist: {Name} matches no track of the target album (confidence {Confidence:0.00})",
+                        row.Name, mapping.Confidence);
                     return LayaOutcome.Reject;
                 }
 
-                record.Action = DecisionAction.Import;
-                record.Chosen = chosen.Label;
+                record.Chosen = $"unconfident ({NoMatchChoice})";
                 record.Confidence = mapping.Confidence;
-                ApplyImport(record, row, chosen, importFiles, importRecords);
-                return LayaOutcome.Import;
             }
+            else
+            {
+                var chosen = candidates.FirstOrDefault(c => c.Key == mapping.Choice);
+                if (chosen is not null && mapping.Confidence >= threshold)
+                {
+                    if (chosen.HasFile)
+                    {
+                        record.Action = DecisionAction.RejectBlock;
+                        record.Chosen = $"duplicate: '{chosen.TrackTitle}' already has a file";
+                        record.Confidence = mapping.Confidence;
+                        record.Status = DecisionStatus.Pending;
+                        pendingRejects.Add(record);
+                        logger.LogInformation(
+                            "Selected track '{Track}' already has a file — rejecting+blocklisting download ({Name}, confidence {Confidence:0.00})",
+                            chosen.TrackTitle, row.Name, mapping.Confidence);
+                        return LayaOutcome.Reject;
+                    }
 
-            record.Chosen = mapping.Choice == "no_match" ? "no_match" : $"unconfident ({mapping.Choice})";
-            record.Confidence = mapping.Confidence;
+                    record.Action = DecisionAction.Import;
+                    record.Chosen = chosen.Label;
+                    record.Confidence = mapping.Confidence;
+                    ApplyImport(record, row, chosen, importFiles, importRecords);
+                    return LayaOutcome.Import;
+                }
+
+                record.Chosen = $"unconfident ({mapping.Choice})";
+                record.Confidence = mapping.Confidence;
+            }
         }
 
         record.Action = DecisionAction.LeaveToHuman;
         record.Status = DecisionStatus.Pending;
         record.Chosen ??= "low confidence / no action";
-        record.Confidence ??= response.Answers.TryGetValue("reject", out var rej) ? rej.Confidence : null;
         store.Save(record);
-        logger.LogInformation("Leave to human: {Name} (mapping={MappingChoice}, reject={Noul})",
+        logger.LogInformation("Leave to human: {Name} (mapping={MappingChoice}, confidence={Confidence:0.00})",
             row.Name, response.Answers.TryGetValue("mapping", out var m) ? m.Choice : null,
-            response.Answers.TryGetValue("reject", out var r) ? r.Noul : null);
+            record.Confidence ?? 0d);
         return LayaOutcome.LeaveToHuman;
     }
 

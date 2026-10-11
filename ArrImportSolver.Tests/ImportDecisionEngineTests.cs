@@ -451,15 +451,11 @@ public class ImportDecisionEngineTests
         var candidate = new MappingCandidate("option_0", 10, "title: 'Song' | track: 1", 1, 1, 100, "Song", 1, 180000, false);
         var questions = _engine.BuildQuestions(queueItem, row, new[] { candidate });
         Assert.Contains("mapping", questions.Keys);
-        Assert.Contains("reject", questions.Keys);
+        Assert.DoesNotContain("reject", questions.Keys);
         Assert.Equal("choice", questions["mapping"].Type);
-        Assert.Equal("noul", questions["reject"].Type);
         Assert.NotNull(questions["mapping"].Criteria);
-        Assert.NotNull(questions["reject"].Criteria);
         Assert.Contains("option_0", questions["mapping"].Criteria!.Keys);
         Assert.Contains("no_match", questions["mapping"].Criteria!.Keys);
-        Assert.Contains("false", questions["reject"].Criteria!.Keys);
-        Assert.Contains("true", questions["reject"].Criteria!.Keys);
     }
 
     [Fact]

@@ -151,21 +151,9 @@ var mappingInstructions =
              {downloadedInfo} Decide by TITLE and LENGTH first: the matching candidate 
              has the same title and a nearly equal length, even when its track number differs (deluxe edition, second 
              disc or a re-numbering). A radio edit or live version can be shorter or longer, so the title is the decisive 
-             signal and the length confirms it. If no candidate shares the title and length, answer no_match.
+             signal and the length confirms it. Answer no_match when the download is not a track of {targetAlbum} at all - 
+             it belongs to a different album or artist, or is garbage - so it can be rejected and blocklisted instead.
              """;
-
-        var rejectInstructions =
-            $"""
-             We want to import the album {targetAlbum}. Is the download a release other than {targetAlbum} - 
-             a different album, a different artist, or garbage - and should therefore be rejected and blocklisted 
-             so Lidarr does not grab it again? {downloadedInfo}
-             """;
-
-        if (candidates.Count > 0)
-        {
-            rejectInstructions += " Tracks on the album we want to import: " +
-                string.Join("; ", candidates.Select(c => $"{c.Key}: {c.Label}")) + ".";
-        }
 
         return new Dictionary<string, QuestionDefinition>
         {
@@ -174,18 +162,6 @@ var mappingInstructions =
                 Type = "choice",
                 Instructions = mappingInstructions,
                 Criteria = criteria
-            },
-            ["reject"] = new()
-            {
-                Type = "noul",
-                Instructions = rejectInstructions,
-                Criteria = new Dictionary<string, string>
-                {
-                    ["false"] =
-                        $"No - the download is the album we want to import ({targetAlbum}); keep it and map its tracks.",
-                    ["true"] =
-                        $"Yes - the download is not {targetAlbum} but a different album, a different artist or garbage; reject and blocklist it."
-                }
             }
         };
     }
