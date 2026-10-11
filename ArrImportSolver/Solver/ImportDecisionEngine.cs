@@ -119,7 +119,7 @@ public class ImportDecisionEngine : IImportDecisionEngine
         // budget, truncating the track number and duration that identify each option.
         var hasOffTargetRelease = candidates.Any(c => c.AlbumReleaseId != row.AlbumReleaseId);
 
-        var criteria = new Dictionary<string, string>();
+        var criteria = new Dictionary<string, string?>();
         foreach (var candidate in candidates)
         {
             var description = candidate.Label;

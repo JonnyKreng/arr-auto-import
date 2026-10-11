@@ -27,7 +27,12 @@ public sealed class QuestionDefinition
 {
     public string Type { get; set; } = "choice";
     public string? Instructions { get; set; }
-    public Dictionary<string, string>? Criteria { get; set; }
+
+    /// <summary>
+    /// Offered options, keyed by the answer key the model must echo back. Values may be null for a
+    /// key that needs no description, so the value type is nullable.
+    /// </summary>
+    public Dictionary<string, string?>? Criteria { get; set; }
 }
 
 public interface IImportDecisionEngine

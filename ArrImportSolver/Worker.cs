@@ -309,16 +309,9 @@ public class Worker(
         record.Questions = JsonSerializer.Serialize(questions, JsonOptions);
         record.InputSize = record.State.Length;
 
-        var llmQuestions = questions.ToDictionary(
-            kvp => kvp.Key,
-            kvp => new QuestionDefinition
-            {
-                Type = kvp.Value.Type,
-                Instructions = kvp.Value.Instructions,
-                Criteria = kvp.Value.Criteria?.ToDictionary(k => k.Key, v => v.Value!)
-            });
-
-        var request = new LlmDecideRequest { State = state, Questions = llmQuestions };
+        // The questions already are QuestionDefinitions with matching criteria types, so they can be
+        // handed to the client as they are.
+        var request = new LlmDecideRequest { State = state, Questions = questions };
 
         var stopwatch = Stopwatch.StartNew();
         var response = await DecideWithRetryAsync(request, ct);

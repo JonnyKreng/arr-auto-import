@@ -1,6 +1,6 @@
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ArrImportSolver.Options;
 using Microsoft.Extensions.Options;
 
@@ -65,14 +65,15 @@ public class LlmDecisionClient
             response_format = new { type = "json_object" }
         };
 
-        var body = JsonSerializer.Serialize(payload, JsonOptions);
-        using var content = new StringContent(body, Encoding.UTF8, "application/json");
+        var requestBody = JsonSerializer.Serialize(payload, JsonOptions);
+        using var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
 
         HttpRequestMessage? requestMessage = null;
         if (!string.IsNullOrEmpty(opts.ApiKey))
         {
             requestMessage = new HttpRequestMessage(HttpMethod.Post, url);
-            requestMessage.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);
+            requestMessage.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);
             requestMessage.Content = content;
         }
 
@@ -86,8 +87,18 @@ public class LlmDecisionClient
                 : await _http.PostAsync(url, content, timeout.Token);
             if (httpResponse.IsSuccessStatusCode)
             {
-                var result = await httpResponse.Content.ReadFromJsonAsync<LlmChatResponse>(JsonOptions, timeout.Token);
-                return ParseAnswer(result, qid, qdef);
+                // Read the body as text first: Ollama (and proxies in front of it) happily answer 200
+                // with an HTML error page or an error envelope, and ReadFromJsonAsync would turn that
+                // into an opaque JsonException instead of a diagnosable message.
+                var body = await httpResponse.Content.ReadAsStringAsync(timeout.Token);
+                var outcome = ParseAnswer(body, qid, qdef);
+                if (outcome.Error is not null)
+                {
+                    _logger.LogWarning("LLM answer for question {QuestionId} at {Url} failed: {Error}; body: {Body}",
+                        qid, url, outcome.Error, Truncate(body, 500));
+                }
+
+                return outcome;
             }
 
             var detail = await httpResponse.Content.ReadAsStringAsync(timeout.Token);
@@ -119,24 +130,24 @@ public class LlmDecisionClient
             new() { ["role"] = "system", ["content"] = SystemPrompt }
         };
 
-        foreach (var (qid, qdef) in request.Questions)
+        foreach (var (_, qdef) in request.Questions)
         {
-            var userContent = BuildUserMessage(qid, stateText, qdef);
+            var userContent = BuildUserMessage(stateText, qdef);
             messages.Add(new() { ["role"] = "user", ["content"] = userContent });
         }
 
         return messages;
     }
 
-    private static string BuildUserMessage(string qid, string stateText, QuestionDefinition qdef)
+    private static string BuildUserMessage(string stateText, QuestionDefinition qdef)
     {
         var instructions = qdef.Instructions ?? "";
         var criteria = qdef.Criteria;
 
         if (qdef.Type == "noul")
         {
-            var falseText = criteria?.GetValueOrDefault("false") as string ?? "";
-            var trueText = criteria?.GetValueOrDefault("true") as string ?? "";
+            var falseText = criteria?.GetValueOrDefault("false") ?? "";
+            var trueText = criteria?.GetValueOrDefault("true") ?? "";
 
             var parts = new List<string>
             {
@@ -152,15 +163,19 @@ public class LlmDecisionClient
         }
         else
         {
-            var optionsLines = criteria?.Select(kvp => $"- {kvp.Key}: {kvp.Value}")
-                .Where(l => !string.IsNullOrEmpty(l.Split(": ")[1]))
+            // Filter on the criteria value itself: splitting the rendered line on ": " would also
+            // break on keys or descriptions that contain ": ".
+            var optionsLines = criteria?
+                .Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
+                .Select(kvp => $"- {kvp.Key}: {kvp.Value}")
                 .ToList() ?? new List<string>();
 
             var parts = new List<string>
             {
                 $"Download context (JSON):\n{stateText}",
                 $"Include this download into the target album.\nQuestion:\n{instructions}",
-                "Options (key: candidate). Answer with the KEY of the option you choose:\n" + string.Join("\n", optionsLines),
+                "Options (key: candidate). Answer with the KEY of the option you choose:\n" +
+                string.Join("\n", optionsLines),
                 """Return JSON: {"choice": "<key>", "confidence": <0..1>}. "confidence" is how sure you are (1.0 = certain). If none of the options fits the download, choose "no_match". Never invent a key - use one of the keys listed above."""
             };
 
@@ -168,31 +183,56 @@ public class LlmDecisionClient
         }
     }
 
-    private static AskOutcome ParseAnswer(LlmChatResponse? result, string qid, QuestionDefinition qdef)
+    private static AskOutcome ParseAnswer(string body, string qid, QuestionDefinition qdef)
     {
-        if (result?.Choices is null || result.Choices.Count == 0)
+        if (string.IsNullOrWhiteSpace(body))
         {
-            return new AskOutcome { Error = "No choices in LLM response" };
+            return new AskOutcome { Error = "Empty response body from LLM" };
         }
 
-        var choice = result.Choices[0];
-        var content = choice.Message?.Content;
-
-        if (string.IsNullOrEmpty(content))
+        LlmChatResponse? result;
+        try
+        {
+            result = JsonSerializer.Deserialize<LlmChatResponse>(body, JsonOptions);
+        }
+        catch (JsonException ex)
         {
             return new AskOutcome
             {
-                Error = $"Empty content in LLM response (finish_reason={choice.FinishReason ?? "unknown"})"
+                Error = $"LLM response was not JSON ({ex.Message}); body started with: {Truncate(body, 120)}"
             };
         }
 
-        var parsed = ExtractJson(content);
+        if (result?.Choices is null || result.Choices.Count == 0)
+        {
+            // Ollama reports "model not loaded" and friends with a 200 + {"error": ...} envelope.
+            var envelope = TryReadErrorEnvelope(body);
+            return new AskOutcome
+            {
+                Error = envelope ?? $"No choices in LLM response; body started with: {Truncate(body, 120)}"
+            };
+        }
+
+        var choice = result.Choices[0];
+        var content = choice.Message?.GetContent();
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return new AskOutcome
+            {
+                Error =
+                    $"Empty content in LLM response (finish_reason={choice.EffectiveFinishReason ?? "unknown"}); body started with: {Truncate(body, 120)}"
+            };
+        }
+
+        var answerKeys = qdef.Type == "noul" ? new[] { "noul" } : new[] { "choice" };
+        var parsed = ExtractJson(content, answerKeys);
         if (parsed is null)
         {
             return new AskOutcome
             {
                 Error =
-                    $"Failed to parse JSON from LLM response (finish_reason={choice.FinishReason ?? "unknown"}, content length {content.Length})"
+                    $"Failed to parse JSON from LLM response (finish_reason={choice.EffectiveFinishReason ?? "unknown"}, content length {content.Length}): {Truncate(content, 120)}"
             };
         }
 
@@ -214,8 +254,29 @@ public class LlmDecisionClient
             };
         }
 
-        var answerChoice = parsed.GetValueOrDefault("choice")?.ToString() ?? "";
+        var answerChoice = parsed.GetValueOrDefault("choice")?.ToString()?.Trim() ?? "";
         var answerConfidence = ToDouble(parsed.GetValueOrDefault("confidence"), 0.0);
+
+        if (answerChoice.Length == 0)
+        {
+            return new AskOutcome
+            {
+                Error = $"LLM answer for '{qid}' had no 'choice' key; content: {Truncate(content, 120)}"
+            };
+        }
+
+        // A key that was never offered means the model hallucinated it (or echoed the label instead
+        // of the key). Importing on that would attach the file to an arbitrary candidate, so fail
+        // loudly and let the Worker leave the row to a human instead.
+        var knownKeys = qdef.Criteria?.Keys;
+        if (knownKeys is { Count: > 0 } && !knownKeys.Contains(answerChoice))
+        {
+            return new AskOutcome
+            {
+                Error =
+                    $"LLM answer for '{qid}' chose unknown option '{answerChoice}'; expected one of: {string.Join(", ", knownKeys)}"
+            };
+        }
 
         return new AskOutcome
         {
@@ -229,30 +290,113 @@ public class LlmDecisionClient
         };
     }
 
-    private static Dictionary<string, object>? ExtractJson(string text)
+    private static Dictionary<string, object>? ExtractJson(string text, IReadOnlyCollection<string> answerKeys)
     {
-        var firstBrace = text.IndexOf('{');
-        if (firstBrace < 0) return null;
+        Dictionary<string, object>? firstObject = null;
 
-        var depth = 0;
-        for (int i = firstBrace; i < text.Length; i++)
+        // Scan every balanced top-level object instead of stopping at the first one. Models often
+        // prefix their answer with a bit of prose that itself contains braces (an example snippet,
+        // a quoted JSON fragment), and that object must not win over the real answer.
+        var i = 0;
+        while (i < text.Length)
         {
-            if (text[i] == '{' || text[i] == '[') depth++;
-            else if (text[i] == '}' || text[i] == ']') depth--;
-
-            if (depth == 0)
+            if (text[i] != '{')
             {
-                try
-                {
-                    return JsonSerializer.Deserialize<Dictionary<string, object>>(text[firstBrace..(i + 1)], JsonOptions);
-                }
-                catch
-                {
-                    return null;
-                }
+                i++;
+                continue;
             }
+
+            var end = FindObjectEnd(text, i);
+            if (end < 0) return firstObject;
+
+            var parsed = TryDeserializeObject(text[i..(end + 1)]);
+            if (parsed is not null)
+            {
+                if (answerKeys.Any(parsed.ContainsKey)) return parsed;
+                firstObject ??= parsed;
+            }
+
+            i = end + 1;
         }
-        return null;
+
+        return firstObject;
+    }
+
+    /// <summary>Index of the '}' closing the object that starts at <paramref name="start"/>, or -1.</summary>
+    private static int FindObjectEnd(string text, int start)
+    {
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"':
+                    inString = true;
+                    break;
+                case '{':
+                case '[':
+                    depth++;
+                    break;
+                case '}':
+                case ']':
+                    depth--;
+                    break;
+            }
+
+            // depth 0 with a ']' means we ran into the end of an enclosing array before the object
+            // closed - the slice is truncated, so stop rather than mis-read it.
+            if (depth == 0) return c == '}' ? i : -1;
+        }
+
+        return -1;
+    }
+
+    private static Dictionary<string, object>? TryDeserializeObject(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object>>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Reads Ollama's {"error": "..."} envelope, which it returns with a 200 status.</summary>
+    private static string? TryReadErrorEnvelope(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            if (!doc.RootElement.TryGetProperty("error", out var error)) return null;
+            var text = error.ValueKind == JsonValueKind.String ? error.GetString() : error.ToString();
+            return string.IsNullOrWhiteSpace(text) ? null : $"LLM reported an error: {Truncate(text, 200)}";
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string Truncate(string value, int max)
+    {
+        value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return value.Length <= max ? value : value[..max] + "...";
     }
 
     private static double Clamp(double value, double min, double max)
@@ -345,11 +489,58 @@ internal class LlmChoice
 {
     public LlmMessage? Message { get; set; }
 
-    public string? FinishReason { get; set; }
+    [JsonPropertyName("finish_reason")] public string? FinishReason { get; set; }
+
+    [JsonPropertyName("stop_reason")] public string? StopReason { get; set; }
+
+    /// <summary>Reason to report in diagnostics: Ollama uses finish_reason, some proxies stop_reason.</summary>
+    [JsonIgnore]
+    public string? EffectiveFinishReason => FinishReason ?? StopReason;
 }
 
 internal class LlmMessage
 {
     public string? Role { get; set; }
-    public string? Content { get; set; }
+
+    /// <summary>
+    /// Plain string for most providers; OpenAI-compatible endpoints may instead send an array of
+    /// content parts, so the raw JSON element is kept and unwrapped by <see cref="GetContent"/>.
+    /// </summary>
+    [JsonPropertyName("content")]
+    public JsonElement? Content { get; set; }
+
+    [JsonPropertyName("reasoning_content")]
+    public string? ReasoningContent { get; set; }
+
+    public string? GetContent()
+    {
+        if (Content is { ValueKind: JsonValueKind.String } element)
+        {
+            return element.GetString();
+        }
+
+        if (Content is { ValueKind: JsonValueKind.Array } array)
+        {
+            var parts = new List<string>();
+            foreach (var part in array.EnumerateArray())
+            {
+                if (part.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(part.GetString() ?? "");
+                }
+                else if (part.ValueKind == JsonValueKind.Object &&
+                         part.TryGetProperty("text", out var text) &&
+                         text.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(text.GetString() ?? "");
+                }
+            }
+
+            var joined = string.Concat(parts);
+            if (!string.IsNullOrWhiteSpace(joined)) return joined;
+        }
+
+        // Reasoning models can emit the whole answer into reasoning_content with an empty content.
+        return ReasoningContent;
+    }
 }
